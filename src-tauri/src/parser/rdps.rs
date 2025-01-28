@@ -1,5 +1,4 @@
-use crate::parser::entity_tracker::Entity;
-use crate::parser::models::*;
+use crate::models::*;
 use crate::parser::utils::is_support_class_id;
 use hashbrown::HashMap;
 

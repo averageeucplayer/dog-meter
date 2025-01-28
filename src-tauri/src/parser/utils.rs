@@ -1,19 +1,31 @@
+use crate::abstractions::EventEmitter;
 use crate::constants::DB_VERSION;
-use crate::parser::entity_tracker::Entity;
-use crate::parser::models::*;
+use crate::models::events::{EncounterUpdate, InvalidDamage, PartyUpdate};
+use crate::models::*;
 use crate::parser::skill_tracker::SkillTracker;
 use crate::parser::stats_api::PlayerStats;
-use crate::parser::status_tracker::StatusEffectDetails;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use hashbrown::{HashMap, HashSet};
-use moka::sync::Cache;
+use hashbrown::HashMap;
+use log::{info, warn};
 use rusqlite::{params, Transaction};
 use serde::Serialize;
 use serde_json::json;
+use uuid::Uuid;
+use std::cell::RefCell;
 use std::cmp::{max, Ordering, Reverse};
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use super::encounter_state::EncounterState;
+use super::entity_tracker::EntityTracker;
+use super::id_tracker::IdTracker;
+use super::party_tracker::PartyTracker;
+use super::stats_api::StatsApi;
 
 pub fn encounter_entity_from_entity(entity: &Entity) -> EncounterEntity {
     let mut e = EncounterEntity {
@@ -826,7 +838,7 @@ pub fn insert_data(
     raid_difficulty: String,
     region: Option<String>,
     player_info: Option<HashMap<String, PlayerStats>>,
-    meter_version: String,
+    meter_version: &str,
     ntp_fight_start: i64,
     rdps_valid: bool,
     manual: bool,
@@ -874,7 +886,7 @@ pub fn insert_data(
             )
         },
         region,
-        version: Some(meter_version),
+        version: Some(meter_version.to_string()),
         rdps_valid: Some(rdps_valid),
         rdps_message: if rdps_valid {
             None
@@ -1656,3 +1668,192 @@ fn get_spec_from_ark_passive(node: &ArkPassiveNode) -> String {
     }
     .to_string()
 }
+
+pub fn write_local_players(local_info: &LocalInfo, path: &str) -> anyhow::Result<()> {
+    let local_players_file = serde_json::to_string(local_info)?;
+    std::fs::write(path, local_players_file)?;
+    Ok(())
+}
+
+pub fn get_and_set_region(path: &str, state: &mut EncounterState) {
+    match std::fs::read_to_string(path) {
+        Ok(region) => {
+            state.region = Some(region);
+        }
+        Err(_) => {
+            // warn!("failed to read region file. {}", e);
+        }
+    }
+}
+
+pub fn parse_pkt<T, F>(data: &[u8], new_fn: F, pkt_name: &str) -> Option<T>
+where
+    F: FnOnce(&[u8]) -> Result<T, anyhow::Error>,
+{
+    match new_fn(data) {
+        Ok(packet) => Some(packet),
+        Err(e) => {
+            warn!("Error parsing {}: {}", pkt_name, e);
+            None
+        }
+    }
+}
+
+pub fn debug_print(args: std::fmt::Arguments<'_>) {
+    #[cfg(debug_assertions)]
+    {
+        info!("{}", args);
+    }
+}
+
+pub fn update_party(
+    party_tracker: &Rc<RefCell<PartyTracker>>,
+    entity_tracker: &EntityTracker,
+) -> Vec<Vec<String>> {
+    let mut party_info: HashMap<u32, Vec<String>> = HashMap::new();
+
+    for (entity_id, party_id) in party_tracker.borrow().entity_id_to_party_id.iter() {
+        party_info.entry(*party_id).or_insert_with(Vec::new).extend(
+            entity_tracker
+                .entities
+                .get(entity_id)
+                .map(|entity| entity.name.clone()),
+        );
+    }
+    let mut sorted_parties = party_info.into_iter().collect::<Vec<(u32, Vec<String>)>>();
+    sorted_parties.sort_by_key(|&(party_id, _)| party_id);
+    sorted_parties
+        .into_iter()
+        .map(|(_, members)| members)
+        .collect()
+}
+
+pub fn on_shield_change(
+    entity_tracker: &mut EntityTracker,
+    id_tracker: &Rc<RefCell<IdTracker>>,
+    state: &mut EncounterState,
+    status_effect: StatusEffectDetails,
+    change: u64,
+) {
+    if change == 0 {
+        return;
+    }
+    let source = entity_tracker.get_source_entity(status_effect.source_id);
+    let target_id = if status_effect.target_type == StatusEffectTargetType::Party {
+        id_tracker
+            .borrow()
+            .get_entity_id(status_effect.target_id)
+            .unwrap_or_default()
+    } else {
+        status_effect.target_id
+    };
+    let target = entity_tracker.get_source_entity(target_id);
+    state.on_boss_shield(&target, status_effect.value);
+    state.on_shield_used(&source, &target, status_effect.status_effect_id, change);
+}
+
+// read saved local players
+// this info is used in case meter was opened late
+pub fn get_local_info(local_player_path: &str, stats_api: &mut StatsApi) -> anyhow::Result<LocalInfo> {
+    let mut local_info = LocalInfo::default();
+    
+    let local_player_path = PathBuf::from(local_player_path);
+    if local_player_path.exists() {
+        let local_players_file = std::fs::read_to_string(&local_player_path)?;
+        local_info = serde_json::from_str(&local_players_file).unwrap_or_default();
+        let mut client_id = local_info.client_id.clone();
+
+        if client_id.is_empty() {
+            client_id = Uuid::new_v4().to_string();
+            stats_api.client_id.clone_from(&client_id);
+            local_info.client_id.clone_from(&client_id);
+            write_local_players(&local_info, &local_player_path.to_str().unwrap())?;
+        } else {
+            stats_api.client_id.clone_from(&client_id);
+        }
+    }
+
+    Ok(local_info)
+}
+
+pub fn send_to_ui<E: EventEmitter>(
+    event_emitter: Arc<E>,
+    encounter: Encounter,
+    is_damage_valid: bool,
+    party_info: Option<HashMap<i32, Vec<String>>>) {
+    tokio::task::spawn(async move {
+
+        event_emitter
+            .emit(EncounterUpdate { encounter })
+            .expect("failed to emit encounter-update");
+
+        if !is_damage_valid {
+            event_emitter
+                .emit(InvalidDamage { })
+                .expect("failed to emit invalid-damage");
+        }
+
+        if let Some(party_info) = party_info {
+            event_emitter
+                .emit(PartyUpdate { party_info })
+                .expect("failed to emit party-update");
+        }
+    });
+}
+
+pub fn get_party_info(
+    last_party_update: &mut Instant,
+    party_duration: Duration,
+    party_cache: &mut Option<Vec<Vec<String>>>,
+    party_map_cache: &mut HashMap<i32, Vec<String>>,
+    party_freeze: bool,
+    party_tracker: &Rc<RefCell<PartyTracker>>,
+    entity_tracker: &EntityTracker
+) -> Option<HashMap<i32, Vec<String>>> {
+    if last_party_update.elapsed() >= party_duration && !party_freeze {
+        *last_party_update = Instant::now();
+        // we used cached party if it exists
+        if party_cache.is_some() {
+            return Some(party_map_cache.clone())
+        }
+
+        let party = update_party(&party_tracker, &entity_tracker);
+        
+        if party.len() > 1 {
+            let current_party: HashMap<i32, Vec<String>> = party
+                .iter()
+                .enumerate()
+                .map(|(index, party)| (index as i32, party.clone()))
+                .collect();
+
+            if party.iter().all(|p| p.len() == 4) {
+                *party_cache = Some(party.clone());
+                party_map_cache.clone_from(&current_party);
+            }
+
+            return Some(current_party)
+        }
+    }
+
+    return None
+}
+
+pub fn get_esther_from_npc_id(npc_id: u32) -> Option<Esther> {
+    ESTHER_DATA
+        .iter()
+        .find(|esther| esther.npc_ids.contains(&npc_id))
+        .cloned()
+}
+
+pub fn get_skill_class_id(skill_id: &u32) -> u32 {
+    if let Some(skill) = SKILL_DATA.get(skill_id) {
+        skill.class_id
+    } else {
+        0
+    }
+}
+
+pub fn truncate_gear_level(gear_level: f32) -> f32 {
+    f32::trunc(gear_level * 100.) / 100.
+}
+

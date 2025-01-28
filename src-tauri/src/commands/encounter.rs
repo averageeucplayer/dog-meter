@@ -6,7 +6,7 @@ use log::info;
 use rusqlite::{params, params_from_iter};
 use tauri::Manager;
 
-use crate::{constants::LOGS_WINDOW_LABEL, database::get_db_connection, ArkPassiveData, BossHpLog, DamageStats, Encounter, EncounterDamageStats, EncounterEntity, EncounterMisc, EncounterPreview, EncountersOverview, EntityType, SearchFilter, Skill, SkillStats, StaggerStats, StatusEffect};
+use crate::{constants::LOGS_WINDOW_LABEL, database::get_db_connection, models::*};
 
 
 #[tauri::command]

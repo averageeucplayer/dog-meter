@@ -6,7 +6,7 @@ use sysinfo::System;
 use tauri::Manager;
 use window_vibrancy::{apply_blur, clear_blur};
 
-use crate::{constants::{DATABASE_FILE_NAME, LOGS_WINDOW_LABEL, METER_WINDOW_LABEL, SETTINGS_FILE_NAME}, database::get_db_connection, settings::read_settings, utils, EncounterDbInfo, Settings};
+use crate::{constants::{DATABASE_FILE_NAME, LOGS_WINDOW_LABEL, METER_WINDOW_LABEL, SETTINGS_FILE_NAME}, database::get_db_connection, models::*, settings::read_settings, utils};
 
 
 #[tauri::command]

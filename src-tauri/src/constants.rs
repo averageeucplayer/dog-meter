@@ -1,6 +1,7 @@
 use tauri_plugin_window_state::StateFlags;
 
 pub const DB_VERSION: i32 = 5;
+pub const LOCAL_PLAYERS_FILE_NAME: &str = "local_players.json";
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub const DATABASE_FILE_NAME: &str = "encounters.db";
 pub const METER_WINDOW_LABEL: &str = "main";

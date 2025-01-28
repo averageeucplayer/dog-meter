@@ -4,68 +4,52 @@ use log::{info, warn};
 use meter_core::packets::definitions::PKTIdentityGaugeChangeNotify;
 use moka::sync::Cache;
 use rsntp::SntpClient;
-use rusqlite::Connection;
-use std::cmp::{max, Ordering};
+use std::cmp::max;
 use std::default::Default;
+use std::sync::Arc;
 
-use crate::constants::DATABASE_FILE_NAME;
-use crate::parser::debug_print;
-use tauri::{Manager, Window, Wry};
+use crate::abstractions::{ConnectionFactory, EventEmitter};
+use crate::models::events::{ClearEncounter, PhaseTransition, RaidStart, ZoneChange};
 use tokio::task;
 
-use crate::parser::entity_tracker::{Entity, EntityTracker};
-use crate::parser::models::*;
-use crate::parser::rdps::*;
+use crate::parser::entity_tracker::EntityTracker;
+use crate::models::*;
 use crate::parser::skill_tracker::SkillTracker;
 use crate::parser::stats_api::{PlayerStats, StatsApi};
-use crate::parser::status_tracker::StatusEffectDetails;
 use crate::parser::utils::*;
 
 const RDPS_VALID_LIMIT: i64 = 25_000;
 
 #[derive(Debug)]
 pub struct EncounterState {
-    pub window: Window<Wry>,
     pub encounter: Encounter,
     pub resetting: bool,
     pub boss_dead_update: bool,
     pub saved: bool,
-
     pub raid_clear: bool,
-
-    prev_stagger: i32,
-
-    damage_log: HashMap<String, Vec<(i64, i64)>>,
-    identity_log: HashMap<String, IdentityLog>,
-    cast_log: HashMap<String, HashMap<u32, Vec<i32>>>,
-
-    boss_hp_log: HashMap<String, Vec<BossHpLog>>,
-
-    stagger_log: Vec<(i32, f32)>,
-    stagger_intervals: Vec<(i32, i32)>,
-
     pub party_info: Vec<Vec<String>>,
     pub raid_difficulty: String,
     pub raid_difficulty_id: u32,
     pub boss_only_damage: bool,
     pub region: Option<String>,
-
+    pub rdps_valid: bool,
+    pub skill_tracker: SkillTracker,
+    pub damage_is_valid: bool,
+    prev_stagger: i32,
+    damage_log: HashMap<String, Vec<(i64, i64)>>,
+    identity_log: HashMap<String, IdentityLog>,
+    cast_log: HashMap<String, HashMap<u32, Vec<i32>>>,
+    boss_hp_log: HashMap<String, Vec<BossHpLog>>,
+    stagger_log: Vec<(i32, f32)>,
+    stagger_intervals: Vec<(i32, i32)>,
     sntp_client: SntpClient,
     ntp_fight_start: i64,
-
-    pub rdps_valid: bool,
-
-    pub skill_tracker: SkillTracker,
-
     custom_id_map: HashMap<u32, u32>,
-
-    pub damage_is_valid: bool,
 }
 
 impl EncounterState {
-    pub fn new(window: Window<Wry>) -> EncounterState {
+    pub fn new() -> EncounterState {
         EncounterState {
-            window,
             encounter: Encounter::default(),
             resetting: false,
             raid_clear: false,
@@ -154,41 +138,44 @@ impl EncounterState {
 
     // update local player as we get more info
     pub fn update_local_player(&mut self, entity: &Entity) {
+        let entities = &mut self.encounter.entities;
+
         // we replace the existing local player if it exists, since its name might have changed (from hex or "You" to character name)
-        if let Some(mut local) = self.encounter.entities.remove(&self.encounter.local_player) {
+        if let Some(mut local) = entities.remove(&self.encounter.local_player) {
             // update local player name, insert back into encounter
             self.encounter.local_player.clone_from(&entity.name);
             update_player_entity(&mut local, entity);
-            self.encounter
-                .entities
-                .insert(self.encounter.local_player.clone(), local);
+            entities.insert(self.encounter.local_player.clone(), local);
         } else {
             // cannot find old local player by name, so we look by local player's entity id
             // this can happen when the user started meter late
-            let old_local = self
-                .encounter
-                .entities
+            let old_local = entities
                 .iter()
                 .find(|(_, e)| e.id == entity.id)
                 .map(|(key, _)| key.clone());
 
             // if we find the old local player, we update its name and insert back into encounter
             if let Some(old_local) = old_local {
-                let mut new_local = self.encounter.entities[&old_local].clone();
+                let mut new_local = entities[&old_local].clone();
                 update_player_entity(&mut new_local, entity);
-                self.encounter.entities.remove(&old_local);
+                entities.remove(&old_local);
                 self.encounter.local_player.clone_from(&entity.name);
-                self.encounter
-                    .entities
-                    .insert(self.encounter.local_player.clone(), new_local);
+                entities.insert(self.encounter.local_player.clone(), new_local);
             }
         }
     }
 
-    pub fn on_init_env(&mut self, entity: Entity, stats_api: &StatsApi) {
+    pub fn on_init_env<E: EventEmitter, C: ConnectionFactory>(
+        &mut self,
+        entity: Entity,
+        stats_api: &StatsApi,
+        event_emitter: Arc<E>,
+        connection_factory: Arc<C>,
+        version: &str
+    ) {
         // if not already saved to db, we save again
         if !self.saved && !self.encounter.current_boss_name.is_empty() {
-            self.save_to_db(stats_api, false);
+            self.save_to_db(stats_api, false, event_emitter.clone(), connection_factory, version);
         }
 
         // replace or insert local player
@@ -209,26 +196,32 @@ impl EncounterState {
             e.name == self.encounter.local_player || e.damage_stats.damage_dealt > 0
         });
 
-        self.window
-            .emit("zone-change", "")
+        event_emitter
+            .emit(ZoneChange {})
             .expect("failed to emit zone-change");
 
         self.soft_reset(false);
     }
 
-    pub fn on_phase_transition(&mut self, phase_code: i32, stats_api: &mut StatsApi) {
-        self.window
-            .emit("phase-transition", phase_code)
+    pub fn on_phase_transition<E: EventEmitter, C: ConnectionFactory>(
+        &mut self,
+        phase_code: i32,
+        stats_api: &mut StatsApi,
+        event_emitter: Arc<E>,
+        connection_factory: Arc<C>,
+        version: &str) {
+        
+        event_emitter.emit(PhaseTransition { phase_code })
             .expect("failed to emit phase-transition");
 
         match phase_code {
             0 | 2 | 3 | 4 => {
                 if !self.encounter.current_boss_name.is_empty() {
-                    stats_api.send_raid_info(self);
+                    stats_api.send_raid_info(&version, self);
                     if phase_code == 0 {
                         stats_api.valid_zone = false;
                     }
-                    self.save_to_db(stats_api, false);
+                    self.save_to_db(stats_api, false, event_emitter, connection_factory, version);
                     self.saved = true;
                 }
                 self.resetting = true;
@@ -239,12 +232,14 @@ impl EncounterState {
 
     // replace local player
     pub fn on_init_pc(&mut self, entity: Entity, hp: i64, max_hp: i64) {
-        self.encounter.entities.remove(&self.encounter.local_player);
+        let entities = &mut self.encounter.entities;
+
+        entities.remove(&self.encounter.local_player);
         self.encounter.local_player.clone_from(&entity.name);
         let mut player = encounter_entity_from_entity(&entity);
         player.current_hp = hp;
         player.max_hp = max_hp;
-        self.encounter.entities.insert(player.name.clone(), player);
+        entities.insert(player.name.clone(), player);
     }
 
     // add or update player to encounter
@@ -528,42 +523,18 @@ impl EncounterState {
         entity_tracker: &EntityTracker,
         player_stats: &Option<Cache<String, PlayerStats>>,
         timestamp: i64,
+        event_emitter: &impl EventEmitter
     ) {
-        let hit_flag = match damage_data.modifier & 0xf {
-            0 => HitFlag::NORMAL,
-            1 => HitFlag::CRITICAL,
-            2 => HitFlag::MISS,
-            3 => HitFlag::INVINCIBLE,
-            4 => HitFlag::DOT,
-            5 => HitFlag::IMMUNE,
-            6 => HitFlag::IMMUNE_SILENCED,
-            7 => HitFlag::FONT_SILENCED,
-            8 => HitFlag::DOT_CRITICAL,
-            9 => HitFlag::DODGE,
-            10 => HitFlag::REFLECT,
-            11 => HitFlag::DAMAGE_SHARE,
-            12 => HitFlag::DODGE_HIT,
-            13 => HitFlag::MAX,
-            _ => {
-                return;
-            }
-        };
-        let hit_option_raw = ((damage_data.modifier >> 4) & 0x7) - 1;
-        let hit_option = match hit_option_raw {
-            -1 => HitOption::NONE,
-            0 => HitOption::BACK_ATTACK,
-            1 => HitOption::FRONTAL_ATTACK,
-            2 => HitOption::FLANK_ATTACK,
-            3 => HitOption::MAX,
-            _ => {
-                return;
-            }
-        };
+        let hit_flag = HitFlag::from(damage_data.modifier & 0xf);
+        let hit_option_raw = (damage_data.modifier >> 4) & 0x7;
+        let hit_option = HitOption::from(hit_option_raw);
+        let entities = &mut self.encounter.entities;
+        let damage_stats = &mut self.encounter.encounter_damage_stats;
 
-        if hit_flag == HitFlag::INVINCIBLE {
+        if hit_flag == HitFlag::Invincible {
             return;
         }
-        if hit_flag == HitFlag::DAMAGE_SHARE
+        if hit_flag == HitFlag::DamageShare
             && damage_data.skill_id == 0
             && damage_data.skill_effect_id == 0
         {
@@ -577,16 +548,12 @@ impl EncounterState {
             skill_effect_id = proj_entity.skill_effect_id;
         }
 
-        let mut source_entity = self
-            .encounter
-            .entities
+        let mut source_entity = entities
             .entry(dmg_src_entity.name.clone())
             .or_insert_with(|| encounter_entity_from_entity(dmg_src_entity))
             .to_owned();
 
-        let mut target_entity = self
-            .encounter
-            .entities
+        let mut target_entity = entities
             .entry(dmg_target_entity.name.clone())
             .or_insert_with(|| {
                 let mut target_entity = encounter_entity_from_entity(dmg_target_entity);
@@ -627,8 +594,8 @@ impl EncounterState {
             };
 
             self.encounter.boss_only_damage = self.boss_only_damage;
-            self.window
-                .emit("raid-start", timestamp)
+            event_emitter
+                .emit(RaidStart { timestamp })
                 .expect("failed to emit raid-start");
         }
 
@@ -720,11 +687,13 @@ impl EncounterState {
         }
         skill.last_timestamp = timestamp;
 
-        source_entity.damage_stats.damage_dealt += damage;
+        let source_damage_stats = &mut source_entity.damage_stats;
+
+        source_damage_stats.damage_dealt += damage;
 
         let is_hyper_awakening = is_hyper_awakening_skill(skill.id);
         if is_hyper_awakening {
-            source_entity.damage_stats.hyper_awakening_damage += damage;
+            source_damage_stats.hyper_awakening_damage += damage;
         }
 
         target_entity.damage_stats.damage_taken += damage;
@@ -732,33 +701,33 @@ impl EncounterState {
         source_entity.skill_stats.hits += 1;
         skill.hits += 1;
 
-        if hit_flag == HitFlag::CRITICAL || hit_flag == HitFlag::DOT_CRITICAL {
+        if hit_flag == HitFlag::Critical || hit_flag == HitFlag::DotCritical {
             source_entity.skill_stats.crits += 1;
-            source_entity.damage_stats.crit_damage += damage;
+            source_damage_stats.crit_damage += damage;
             skill.crits += 1;
             skill.crit_damage += damage;
             skill_hit.crit = true;
         }
-        if hit_option == HitOption::BACK_ATTACK {
+        if hit_option == HitOption::BackAttack {
             source_entity.skill_stats.back_attacks += 1;
-            source_entity.damage_stats.back_attack_damage += damage;
+            source_damage_stats.back_attack_damage += damage;
             skill.back_attacks += 1;
             skill.back_attack_damage += damage;
             skill_hit.back_attack = true;
         }
-        if hit_option == HitOption::FRONTAL_ATTACK {
+        if hit_option == HitOption::FrontalAttack {
             source_entity.skill_stats.front_attacks += 1;
-            source_entity.damage_stats.front_attack_damage += damage;
+            source_damage_stats.front_attack_damage += damage;
             skill.front_attacks += 1;
             skill.front_attack_damage += damage;
             skill_hit.front_attack = true;
         }
 
         if source_entity.entity_type == EntityType::PLAYER {
-            self.encounter.encounter_damage_stats.total_damage_dealt += damage;
-            self.encounter.encounter_damage_stats.top_damage_dealt = max(
-                self.encounter.encounter_damage_stats.top_damage_dealt,
-                source_entity.damage_stats.damage_dealt,
+            damage_stats.total_damage_dealt += damage;
+            damage_stats.top_damage_dealt = max(
+                damage_stats.top_damage_dealt,
+                source_damage_stats.damage_dealt,
             );
 
             self.damage_log
@@ -774,15 +743,12 @@ impl EncounterState {
                 .iter()
                 .map(|se| map_status_effect(se, &mut self.custom_id_map))
                 .collect::<Vec<_>>();
+
             for buff_id in se_on_source_ids.iter() {
-                if !self
-                    .encounter
-                    .encounter_damage_stats
+                if !damage_stats
                     .unknown_buffs
                     .contains(buff_id)
-                    && !self
-                        .encounter
-                        .encounter_damage_stats
+                    && !damage_stats
                         .buffs
                         .contains_key(buff_id)
                 {
@@ -796,19 +762,13 @@ impl EncounterState {
 
                     if let Some(status_effect) = get_status_effect_data(original_buff_id, source_id)
                     {
-                        self.encounter
-                            .encounter_damage_stats
-                            .buffs
-                            .insert(*buff_id, status_effect);
+                        damage_stats.buffs.insert(*buff_id, status_effect);
                     } else {
-                        self.encounter
-                            .encounter_damage_stats
-                            .unknown_buffs
-                            .insert(*buff_id);
+                        damage_stats.unknown_buffs.insert(*buff_id);
                     }
                 }
                 if !is_buffed_by_support && !is_hat_buff(buff_id) {
-                    if let Some(buff) = self.encounter.encounter_damage_stats.buffs.get(buff_id) {
+                    if let Some(buff) = damage_stats.buffs.get(buff_id) {
                         if let Some(skill) = buff.source.skill.as_ref() {
                             is_buffed_by_support = is_support_class_id(skill.class_id)
                                 && buff.buff_type & StatusEffectBuffTypeFlags::DMG.bits() != 0
@@ -819,7 +779,7 @@ impl EncounterState {
                     }
                 }
                 if !is_buffed_by_identity {
-                    if let Some(buff) = self.encounter.encounter_damage_stats.buffs.get(buff_id) {
+                    if let Some(buff) = damage_stats.buffs.get(buff_id) {
                         if let Some(skill) = buff.source.skill.as_ref() {
                             is_buffed_by_identity = is_support_class_id(skill.class_id)
                                 && buff.buff_type & StatusEffectBuffTypeFlags::DMG.bits() != 0
@@ -837,17 +797,10 @@ impl EncounterState {
                 .iter()
                 .map(|se| map_status_effect(se, &mut self.custom_id_map))
                 .collect::<Vec<_>>();
+
             for debuff_id in se_on_target_ids.iter() {
-                if !self
-                    .encounter
-                    .encounter_damage_stats
-                    .unknown_buffs
-                    .contains(debuff_id)
-                    && !self
-                        .encounter
-                        .encounter_damage_stats
-                        .debuffs
-                        .contains_key(debuff_id)
+                if !damage_stats.unknown_buffs.contains(debuff_id)
+                    && !damage_stats.debuffs.contains_key(debuff_id)
                 {
                     let mut source_id: Option<u32> = None;
                     let original_debuff_id =
@@ -861,20 +814,14 @@ impl EncounterState {
                     if let Some(status_effect) =
                         get_status_effect_data(original_debuff_id, source_id)
                     {
-                        self.encounter
-                            .encounter_damage_stats
-                            .debuffs
-                            .insert(*debuff_id, status_effect);
+                        damage_stats.debuffs.insert(*debuff_id, status_effect);
                     } else {
-                        self.encounter
-                            .encounter_damage_stats
-                            .unknown_buffs
-                            .insert(*debuff_id);
+                        damage_stats.unknown_buffs.insert(*debuff_id);
                     }
                 }
                 if !is_debuffed_by_support {
                     if let Some(debuff) =
-                        self.encounter.encounter_damage_stats.debuffs.get(debuff_id)
+                        damage_stats.debuffs.get(debuff_id)
                     {
                         if let Some(skill) = debuff.source.skill.as_ref() {
                             is_debuffed_by_support = is_support_class_id(skill.class_id)
@@ -887,19 +834,19 @@ impl EncounterState {
 
             if is_buffed_by_support && !is_hyper_awakening {
                 skill.buffed_by_support += damage;
-                source_entity.damage_stats.buffed_by_support += damage;
+                source_damage_stats.buffed_by_support += damage;
             }
             if is_buffed_by_identity && !is_hyper_awakening {
                 skill.buffed_by_identity += damage;
-                source_entity.damage_stats.buffed_by_identity += damage;
+                source_damage_stats.buffed_by_identity += damage;
             }
             if is_debuffed_by_support && !is_hyper_awakening {
                 skill.debuffed_by_support += damage;
-                source_entity.damage_stats.debuffed_by_support += damage;
+                source_damage_stats.debuffed_by_support += damage;
             }
             if is_buffed_by_hat {
                 skill.buffed_by_hat += damage;
-                source_entity.damage_stats.buffed_by_hat += damage;
+                source_damage_stats.buffed_by_hat += damage;
             }
 
             let stabilized_status_active =
@@ -911,7 +858,7 @@ impl EncounterState {
                     continue;
                 }
 
-                if let Some(buff) = self.encounter.encounter_damage_stats.buffs.get(buff_id) {
+                if let Some(buff) = damage_stats.buffs.get(buff_id) {
                     if !stabilized_status_active && buff.source.name.contains("Stabilized Status") {
                         continue;
                     }
@@ -954,593 +901,12 @@ impl EncounterState {
                 skill_hit.debuffed_by = se_on_target_ids;
             }
 
-            // todo
-            /*if let (true, Some(player_stats)) =
-                (self.rdps_valid && damage > 0, player_stats.clone())
-            {
-                // rdps ported from meter-core by herysia
-                // refer to here for documentation
-                // https://github.com/lost-ark-dev/meter-core/blob/a93ed3dd05a251d8dee47f5e6e17f275a0bd89fb/src/logger/gameTracker.ts#L417
-                if let Some(dmg_src_stats) = player_stats.get(&dmg_src_entity.name) {
-                    let mut rdps_data = RdpsData::default();
-                    for status_effect in se_on_source.iter() {
-                        let caster_entity =
-                            match entity_tracker.entities.get(&status_effect.source_id) {
-                                Some(entity) => entity,
-                                None => continue,
-                            };
-                        let caster_encounter_entity =
-                            match self.encounter.entities.get(&caster_entity.name) {
-                                Some(entity) => entity,
-                                None => continue,
-                            };
-                        let caster_stats = match player_stats.get(&caster_entity.name) {
-                            Some(caster) => caster,
-                            None => {
-                                if caster_entity.entity_type == EntityType::PLAYER
-                                    && self.encounter.last_combat_packet
-                                        - self.encounter.fight_start
-                                        > RDPS_VALID_LIMIT
-                                {
-                                    warn!(
-                                        "caster {:?} is not in player_stats. [{}]",
-                                        caster_entity.name,
-                                        self.encounter.last_combat_packet
-                                            - self.encounter.fight_start
-                                    );
-                                    self.rdps_valid = false;
-                                    if !self.rdps_valid {
-                                        self.window
-                                            .emit("rdps", "invalid_stats")
-                                            .expect("failed to emit rdps message");
-                                    }
-                                }
-
-                                PlayerStats::default()
-                            }
-                        };
-                        let original_buff =
-                            match SKILL_BUFF_DATA.get(&status_effect.status_effect_id) {
-                                Some(buff) => buff,
-                                None => continue,
-                            };
-                        let buff = get_buff_after_tripods(
-                            original_buff,
-                            caster_encounter_entity,
-                            skill_id,
-                            skill_effect_id,
-                        );
-
-                        if buff.buff_type == "skill_damage_amplify"
-                            && buff.status_effect_values.is_some()
-                            && caster_encounter_entity.entity_type == EntityType::PLAYER
-                            && status_effect.source_id != dmg_src_entity.id
-                        {
-                            let status_effect_values = buff.status_effect_values.unwrap();
-                            let b_skill_id =
-                                status_effect_values.first().cloned().unwrap_or_default();
-                            let b_skill_effect_id =
-                                status_effect_values.get(4).cloned().unwrap_or_default();
-                            if (b_skill_id == 0 || b_skill_id == skill_id as i32)
-                                && (b_skill_effect_id == 0
-                                    || b_skill_effect_id == skill_effect_id as i32)
-                            {
-                                if let Some(val) =
-                                    status_effect_values.get(1).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate =
-                                        (val as f64 / 10000.0) * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                            }
-                        } else if buff.buff_type == "attack_power_amplify"
-                            && buff.status_effect_values.is_some()
-                            && caster_encounter_entity.entity_type == EntityType::PLAYER
-                            && status_effect.source_id != dmg_src_entity.id
-                        {
-                            let status_effect_values = buff.status_effect_values.unwrap();
-                            if let Some(val) =
-                                status_effect_values.first().cloned().filter(|&v| v != 0)
-                            {
-                                let mut rate =
-                                    (val as f64 / 10000.0) * status_effect.stack_count as f64;
-                                let caster_base_atk_power = caster_stats.stats.atk_power;
-                                let target_base_atk_power = dmg_src_stats.stats.atk_power;
-                                rate *= caster_base_atk_power as f64 / target_base_atk_power as f64;
-                                rdps_data.atk_pow_amplify.push(RdpsBuffData {
-                                    caster: caster_encounter_entity.name.clone(),
-                                    rate,
-                                });
-                            }
-                        }
-
-                        for passive in buff.passive_options {
-                            let val = passive.value as f64;
-                            if passive.option_type == "stat" {
-                                let rate = (val / 10000.0) * status_effect.stack_count as f64;
-                                // println!("{}: {}: {}", passive.key_stat, val, status_effect.stack_count);
-                                if passive.key_stat == "attack_power_sub_rate_2" && val != 0.0 {
-                                    if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                        && status_effect.source_id != dmg_src_entity.id
-                                    {
-                                        rdps_data.atk_pow_sub_rate_2.values.push(RdpsBuffData {
-                                            caster: caster_encounter_entity.name.clone(),
-                                            rate,
-                                        });
-                                        rdps_data.atk_pow_sub_rate_2.sum_rate += rate;
-                                    } else {
-                                        rdps_data.atk_pow_sub_rate_2.self_sum_rate += rate;
-                                    }
-                                } else if passive.key_stat == "attack_power_sub_rate_1"
-                                    && val != 0.0
-                                {
-                                    if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                        && status_effect.source_id != dmg_src_entity.id
-                                    {
-                                        rdps_data.atk_pow_sub_rate_1.values.push(RdpsBuffData {
-                                            caster: caster_encounter_entity.name.clone(),
-                                            rate,
-                                        });
-                                        rdps_data.atk_pow_sub_rate_1.sum_rate += rate;
-                                        rdps_data.atk_pow_sub_rate_1.total_rate *= 1.0 + rate;
-                                    }
-                                } else if passive.key_stat == "skill_damage_rate" && val != 0.0 {
-                                    if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                        && status_effect.source_id != dmg_src_entity.id
-                                    {
-                                        rdps_data.skill_dmg_rate.values.push(RdpsBuffData {
-                                            caster: caster_encounter_entity.name.clone(),
-                                            rate,
-                                        });
-                                        rdps_data.skill_dmg_rate.sum_rate += rate;
-                                    } else {
-                                        rdps_data.skill_dmg_rate.self_sum_rate += rate;
-                                    }
-                                }
-                            }
-                            if passive.key_stat == "critical_hit_rate" && val != 0.0 {
-                                let rate = (val / 10000.0) * status_effect.stack_count as f64;
-                                if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                    && status_effect.source_id != dmg_src_entity.id
-                                {
-                                    rdps_data.crit.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.crit.sum_rate += rate;
-                                } else {
-                                    rdps_data.crit.self_sum_rate += rate;
-                                }
-                            }
-                            if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                && status_effect.source_id != dmg_src_entity.id
-                            {
-                                let mut rate = (val / 10000.0) * status_effect.stack_count as f64;
-                                if passive.key_stat == "skill_damage_sub_rate_2" && val != 0.0 {
-                                    let spec = caster_stats.stats.spec as f64;
-                                    match caster_encounter_entity.class_id {
-                                        105 => rate *= 1.0 + ((spec / 0.0699) * 0.63) / 10000.0,
-                                        204 => rate *= 1.0 + ((spec / 0.0699) * 0.35) / 10000.0,
-                                        602 => rate *= 1.0 + ((spec / 0.0699) * 0.38) / 10000.0,
-                                        _ => {}
-                                    }
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                } else if passive.key_stat == "critical_dam_rate"
-                                    && buff.buff_category.clone().unwrap_or_default() == "buff"
-                                {
-                                    rdps_data.crit_dmg_rate += rate;
-                                }
-                            } else if passive.option_type == "combat_effect" {
-                                if let Some(ce) = COMBAT_EFFECT_DATA.get(&passive.key_index) {
-                                    let ce_conditional_data = CombatEffectConditionData {
-                                        self_entity: dmg_src_entity,
-                                        target_entity: dmg_target_entity,
-                                        caster_entity,
-                                        skill: skill_data.as_ref(),
-                                        hit_option: hit_option_raw,
-                                        target_count,
-                                    };
-                                    let crit_multiplier = get_crit_multiplier_from_combat_effect(
-                                        ce,
-                                        &ce_conditional_data,
-                                    );
-                                    rdps_data.crit_dmg_rate +=
-                                        status_effect.stack_count as f64 * crit_multiplier;
-                                }
-                            }
-                        }
-                    }
-
-                    for status_effect in se_on_target.iter() {
-                        let caster_entity =
-                            match entity_tracker.entities.get(&status_effect.source_id) {
-                                Some(entity) => entity,
-                                None => continue,
-                            };
-                        let caster_encounter_entity =
-                            match self.encounter.entities.get(&caster_entity.name) {
-                                Some(entity) => entity,
-                                None => continue,
-                            };
-                        let original_debuff =
-                            match SKILL_BUFF_DATA.get(&status_effect.status_effect_id) {
-                                Some(buff) => buff,
-                                None => continue,
-                            };
-                        let debuff = get_buff_after_tripods(
-                            original_debuff,
-                            caster_encounter_entity,
-                            skill_id,
-                            skill_effect_id,
-                        );
-                        let status_effect_values = match debuff.status_effect_values {
-                            Some(values) => values,
-                            None => continue,
-                        };
-                        if debuff.buff_type == "instant_stat_amplify" {
-                            if let Some(val) =
-                                status_effect_values.first().cloned().filter(|&v| v != 0)
-                            {
-                                let rate =
-                                    (val as f64 / 10000.0) * status_effect.stack_count as f64;
-                                if caster_encounter_entity.entity_type == EntityType::PLAYER
-                                    && status_effect.source_id != dmg_src_entity.id
-                                {
-                                    rdps_data.crit.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.crit.sum_rate += rate;
-                                } else {
-                                    rdps_data.crit.self_sum_rate += rate;
-                                }
-                            }
-                        }
-                        if caster_encounter_entity.entity_type != EntityType::PLAYER
-                            || status_effect.source_id == dmg_src_entity.id
-                        {
-                            continue;
-                        }
-                        if debuff.buff_type == "instant_stat_amplify" {
-                            if damage_data.damage_type == 0 {
-                                if let Some(val) =
-                                    status_effect_values.get(2).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate = -(val as f64 / 10000.0)
-                                        * status_effect.stack_count as f64
-                                        * 0.5;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                                if let Some(val) =
-                                    status_effect_values.get(7).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate =
-                                        (val as f64 / 10000.0) * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                                if hit_flag == HitFlag::CRITICAL {
-                                    if let Some(val) =
-                                        status_effect_values.get(9).cloned().filter(|&v| v != 0)
-                                    {
-                                        let rate = (val as f64 / 10000.0)
-                                            * status_effect.stack_count as f64;
-                                        rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                            caster: caster_encounter_entity.name.clone(),
-                                            rate,
-                                        });
-                                        rdps_data.multi_dmg.sum_rate += rate;
-                                        rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                    }
-                                }
-                            } else if damage_data.damage_type == 1 {
-                                if let Some(val) =
-                                    status_effect_values.get(3).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate = -(val as f64 / 10000.0)
-                                        * status_effect.stack_count as f64
-                                        * 0.5;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                                if let Some(val) =
-                                    status_effect_values.get(8).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate =
-                                        val as f64 / 10000.0 * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                                if hit_flag == HitFlag::CRITICAL {
-                                    if let Some(val) =
-                                        status_effect_values.get(10).cloned().filter(|&v| v != 0)
-                                    {
-                                        let rate =
-                                            val as f64 / 10000.0 * status_effect.stack_count as f64;
-                                        rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                            caster: caster_encounter_entity.name.clone(),
-                                            rate,
-                                        });
-                                        rdps_data.multi_dmg.sum_rate += rate;
-                                        rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                    }
-                                }
-                            }
-                        } else if debuff.buff_type == "skill_damage_amplify" {
-                            let b_skill_id =
-                                status_effect_values.first().cloned().unwrap_or_default();
-                            let b_skill_effect_id =
-                                status_effect_values.get(4).cloned().unwrap_or_default();
-                            if (b_skill_id == 0 || b_skill_id == skill_id as i32)
-                                && (b_skill_effect_id == 0
-                                    || b_skill_effect_id == skill_effect_id as i32)
-                            {
-                                if let Some(val) =
-                                    status_effect_values.get(1).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate =
-                                        (val as f64 / 10000.0) * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                            }
-                        }
-
-                        if debuff.buff_type == "directional_attack_amplify" {
-                            if hit_option == HitOption::FRONTAL_ATTACK {
-                                if let Some(front_rate) =
-                                    status_effect_values.first().cloned().filter(|&v| v != 0)
-                                {
-                                    let rate = (front_rate as f64 / 100.0)
-                                        * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                            }
-                            if hit_option == HitOption::BACK_ATTACK {
-                                if let Some(back_rate) =
-                                    status_effect_values.get(4).cloned().filter(|&v| v != 0)
-                                {
-                                    let rate = (back_rate as f64 / 100.0)
-                                        * status_effect.stack_count as f64;
-                                    rdps_data.multi_dmg.values.push(RdpsBuffData {
-                                        caster: caster_encounter_entity.name.clone(),
-                                        rate,
-                                    });
-                                    rdps_data.multi_dmg.sum_rate += rate;
-                                    rdps_data.multi_dmg.total_rate *= 1.0 + rate;
-                                }
-                            }
-                        }
-                    }
-
-                    if let (true, Some(skill_data)) =
-                        (!rdps_data.crit.values.is_empty(), skill_data)
-                    {
-                        let ce_conditional_data = CombatEffectConditionData {
-                            self_entity: dmg_src_entity,
-                            target_entity: dmg_target_entity,
-                            caster_entity: dmg_src_entity,
-                            skill: Some(&skill_data),
-                            hit_option: hit_option_raw,
-                            target_count,
-                        };
-                        for option in dmg_src_entity.item_set.iter().flatten() {
-                            if option.option_type == "stat"
-                                && option.key_stat == "critical_dam_rate"
-                            {
-                                rdps_data.crit_dmg_rate += option.value as f64 / 10000.0;
-                            } else if option.option_type == "combat_effect" {
-                                if let Some(ce) = COMBAT_EFFECT_DATA.get(&option.key_index) {
-                                    let crit_multiplier = get_crit_multiplier_from_combat_effect(
-                                        ce,
-                                        &ce_conditional_data,
-                                    );
-                                    rdps_data.crit_dmg_rate += crit_multiplier;
-                                }
-                            }
-
-                            if let Some(tripod_data) = skill.tripod_data.as_ref() {
-                                calculate_tripod_data(
-                                    tripod_data,
-                                    &mut rdps_data,
-                                    skill_effect_id,
-                                    &ce_conditional_data,
-                                );
-                            }
-                        }
-                    }
-
-                    if !rdps_data.skill_dmg_rate.values.is_empty() {
-                        let additional_damage = dmg_src_stats.stats.add_dmg as f64;
-                        rdps_data.skill_dmg_rate.self_sum_rate += additional_damage / 10000.0;
-                    }
-
-                    let mut crit_sum_eff_gain_rate = 0.0;
-                    if !rdps_data.crit.values.is_empty() {
-                        let crit_stat_value = dmg_src_stats.stats.crit as f64;
-                        rdps_data.crit.self_sum_rate += crit_stat_value / 0.2794 / 10000.0;
-                        let capped_sum_rate = 0.0_f64
-                            .max(1.0 - rdps_data.crit.self_sum_rate)
-                            .min(rdps_data.crit.sum_rate);
-                        crit_sum_eff_gain_rate = (capped_sum_rate * rdps_data.crit_dmg_rate
-                            - capped_sum_rate)
-                            / (rdps_data.crit.self_sum_rate * rdps_data.crit_dmg_rate
-                                - rdps_data.crit.self_sum_rate
-                                + 1.0);
-                    }
-
-                    let attack_power_amplify = if rdps_data.atk_pow_amplify.is_empty() {
-                        RdpsBuffData {
-                            caster: "".to_string(),
-                            rate: 0.0,
-                        }
-                    } else {
-                        rdps_data
-                            .atk_pow_amplify
-                            .iter()
-                            .max_by(|a, b| a.rate.partial_cmp(&b.rate).unwrap_or(Ordering::Equal))
-                            .unwrap()
-                            .clone()
-                    };
-
-                    let total_eff_gain_rate = (1.0 + crit_sum_eff_gain_rate)
-                        * (1.0
-                            + rdps_data.atk_pow_sub_rate_2.sum_rate
-                                / (1.0 + rdps_data.atk_pow_sub_rate_2.self_sum_rate))
-                        * (1.0
-                            + rdps_data.skill_dmg_rate.sum_rate
-                                / (1.0 + rdps_data.skill_dmg_rate.self_sum_rate))
-                        * (1.0 + attack_power_amplify.rate)
-                        * rdps_data.multi_dmg.total_rate
-                        * rdps_data.atk_pow_sub_rate_1.total_rate
-                        - 1.0;
-                    let total_sum_gain_rate = crit_sum_eff_gain_rate
-                        + (rdps_data.atk_pow_sub_rate_2.sum_rate
-                            / (1.0 + rdps_data.atk_pow_sub_rate_2.self_sum_rate))
-                        + (rdps_data.skill_dmg_rate.sum_rate
-                            / (1.0 + rdps_data.skill_dmg_rate.self_sum_rate))
-                        + attack_power_amplify.rate
-                        + (rdps_data.multi_dmg.total_rate - 1.0)
-                        + (rdps_data.atk_pow_sub_rate_1.total_rate - 1.0);
-
-                    let unit_rate = (total_eff_gain_rate * damage as f64)
-                        / (total_sum_gain_rate * (1.0 + total_eff_gain_rate));
-                    let crit_gain_unit =
-                        (crit_sum_eff_gain_rate * unit_rate) / rdps_data.crit.sum_rate;
-                    for crit in rdps_data.crit.values {
-                        let delta = crit.rate * crit_gain_unit;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter.entities.get_mut(&crit.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-
-                    for dmg in rdps_data.atk_pow_sub_rate_2.values {
-                        let delta = (dmg.rate / (1.0 + rdps_data.atk_pow_sub_rate_2.self_sum_rate))
-                            * unit_rate;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter.entities.get_mut(&dmg.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-
-                    for dmg in rdps_data.skill_dmg_rate.values {
-                        let delta =
-                            (dmg.rate / (1.0 + rdps_data.skill_dmg_rate.self_sum_rate)) * unit_rate;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter.entities.get_mut(&dmg.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-
-                    let mult_gain_unit = ((rdps_data.multi_dmg.total_rate - 1.0) * unit_rate)
-                        / rdps_data.multi_dmg.sum_rate;
-                    for dmg in rdps_data.multi_dmg.values {
-                        let delta = dmg.rate * mult_gain_unit;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter.entities.get_mut(&dmg.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-
-                    let atk_pow_sub_rate_1_gain_unit =
-                        ((rdps_data.atk_pow_sub_rate_1.total_rate - 1.0) * unit_rate)
-                            / rdps_data.atk_pow_sub_rate_1.sum_rate;
-                    for dmg in rdps_data.atk_pow_sub_rate_1.values {
-                        let delta = dmg.rate * atk_pow_sub_rate_1_gain_unit;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter.entities.get_mut(&dmg.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-
-                    if attack_power_amplify.rate > 0.0 {
-                        let delta = attack_power_amplify.rate * unit_rate;
-                        apply_rdps(
-                            &mut source_entity,
-                            self.encounter
-                                .entities
-                                .get_mut(&attack_power_amplify.caster),
-                            skill_id,
-                            delta,
-                            &mut skill_hit,
-                        );
-                    }
-                } else if dmg_src_entity.entity_type == EntityType::PLAYER
-                    && self.encounter.last_combat_packet - self.encounter.fight_start
-                        > RDPS_VALID_LIMIT
-                {
-                    warn!(
-                        "{:?} is not in player_stats. [{}]",
-                        dmg_src_entity.name,
-                        self.encounter.last_combat_packet - self.encounter.fight_start
-                    );
-                    self.rdps_valid = false;
-
-                    if !self.rdps_valid {
-                        self.window
-                            .emit("rdps", "invalid_stats")
-                            .expect("failed to emit rdps message");
-                    }
-                }
-            }*/
         }
 
         if target_entity.entity_type == EntityType::PLAYER {
-            self.encounter.encounter_damage_stats.total_damage_taken += damage;
-            self.encounter.encounter_damage_stats.top_damage_taken = max(
-                self.encounter.encounter_damage_stats.top_damage_taken,
+            damage_stats.total_damage_taken += damage;
+            damage_stats.top_damage_taken = max(
+                damage_stats.top_damage_taken,
                 target_entity.damage_stats.damage_taken,
             );
         }
@@ -1571,7 +937,8 @@ impl EncounterState {
             let relative_timestamp_s = relative_timestamp / 1000;
 
             if log.is_empty() || log.last().unwrap().time != relative_timestamp_s {
-                log.push(BossHpLog::new(relative_timestamp_s, current_hp, hp_percent));
+                let entry = BossHpLog::new(relative_timestamp_s, current_hp, hp_percent);
+                log.push(entry);
             } else {
                 let last = log.last_mut().unwrap();
                 last.hp = current_hp;
@@ -1589,12 +956,8 @@ impl EncounterState {
             );
         }
 
-        self.encounter
-            .entities
-            .insert(source_entity.name.clone(), source_entity);
-        self.encounter
-            .entities
-            .insert(target_entity.name.clone(), target_entity);
+        entities.insert(source_entity.name.clone(), source_entity);
+        entities.insert(target_entity.name.clone(), target_entity);
     }
 
     pub fn on_counterattack(&mut self, source_entity: &Entity) {
@@ -1650,52 +1013,6 @@ impl EncounterState {
         }
     }
 
-    // pub fn on_stagger_change(&mut self, pkt: &PKTParalyzationStateNotify) {
-    //     if self.encounter.current_boss_name.is_empty() || self.encounter.fight_start == 0 {
-    //         return;
-    //     }
-
-    //     if let Some(boss) = self
-    //         .encounter
-    //         .entities
-    //         .get_mut(&self.encounter.current_boss_name)
-    //     {
-    //         let timestamp = Utc::now().timestamp_millis();
-    //         let current_stagger = pkt.paralyzation_point as i32;
-    //         let max_stagger = pkt.paralyzation_max_point as i32;
-    //         if boss.id == pkt.object_id {
-    //             if current_stagger == max_stagger {
-    //                 let staggered_in =
-    //                     (timestamp - self.encounter.encounter_damage_stats.stagger_start) / 1000;
-    //                 self.stagger_intervals
-    //                     .push((staggered_in as i32, max_stagger))
-    //             } else if current_stagger != 0 && self.prev_stagger == 0 {
-    //                 self.encounter.encounter_damage_stats.stagger_start = timestamp;
-    //             }
-
-    //             self.prev_stagger = current_stagger;
-
-    //             let relative_timestamp_s = ((timestamp - self.encounter.fight_start) / 1000) as i32;
-    //             let stagger_percent = (1.0 - (current_stagger as f32 / max_stagger as f32)) * 100.0;
-    //             if let Some(last) = self.stagger_log.last_mut() {
-    //                 if last.0 == relative_timestamp_s {
-    //                     last.1 = stagger_percent;
-    //                 } else {
-    //                     self.stagger_log
-    //                         .push((relative_timestamp_s, stagger_percent));
-    //                 }
-    //             } else {
-    //                 self.stagger_log
-    //                     .push((relative_timestamp_s, stagger_percent));
-    //             }
-
-    //             if max_stagger > self.encounter.encounter_damage_stats.max_stagger {
-    //                 self.encounter.encounter_damage_stats.max_stagger = max_stagger;
-    //             }
-    //         }
-    //     }
-    // }
-
     pub fn on_boss_shield(&mut self, target_entity: &Entity, shield: u64) {
         if target_entity.entity_type == EntityType::BOSS
             && target_entity.name == self.encounter.current_boss_name
@@ -1716,27 +1033,21 @@ impl EncounterState {
         buff_id: u32,
         shield: u64,
     ) {
+        let entities = &mut self.encounter.entities;
+
         if source_entity.entity_type == EntityType::PLAYER
             && target_entity.entity_type == EntityType::PLAYER
         {
-            let mut target_entity_state = self
-                .encounter
-                .entities
+            let mut target_entity_state = entities
                 .entry(target_entity.name.clone())
                 .or_insert_with(|| encounter_entity_from_entity(target_entity))
                 .to_owned();
-            let mut source_entity_state = self
-                .encounter
-                .entities
+            let mut source_entity_state = entities
                 .entry(source_entity.name.clone())
                 .or_insert_with(|| encounter_entity_from_entity(source_entity))
                 .to_owned();
 
-            if !self
-                .encounter
-                .encounter_damage_stats
-                .applied_shield_buffs
-                .contains_key(&buff_id)
+            if !self.encounter.encounter_damage_stats.applied_shield_buffs.contains_key(&buff_id)
             {
                 let mut source_id: Option<u32> = None;
                 let original_buff_id = if let Some(deref_id) = self.custom_id_map.get(&buff_id) {
@@ -1873,27 +1184,31 @@ impl EncounterState {
         }
     }
 
-    pub fn save_to_db(&mut self, stats_api: &StatsApi, manual: bool) {
+    pub fn save_to_db<E: EventEmitter, C: ConnectionFactory>(
+        &mut self,
+        stats_api: &StatsApi,
+        manual: bool,
+        event_emitter: Arc<E>,
+        connection_factory: Arc<C>,
+        version: &str
+    ) {
+        let entities = &mut self.encounter.entities;
+        let current_boss_name = &self.encounter.current_boss_name;
+
         if !manual {
             if self.encounter.fight_start == 0
                 || self.encounter.current_boss_name.is_empty()
-                || !self
-                    .encounter
-                    .entities
-                    .contains_key(&self.encounter.current_boss_name)
-                || !self
-                    .encounter
-                    .entities
+                || !entities
+                    .contains_key(current_boss_name)
+                || !entities
                     .values()
-                    .any(|e| e.entity_type == EntityType::PLAYER && e.damage_stats.damage_dealt > 0)
+                    .any(|entity| entity.is_player_with_stats())
             {
                 return;
             }
 
-            if let Some(current_boss) = self
-                .encounter
-                .entities
-                .get(&self.encounter.current_boss_name)
+            if let Some(current_boss) = entities
+                .get(current_boss_name)
             {
                 if current_boss.current_hp == current_boss.max_hp {
                     return;
@@ -1906,13 +1221,6 @@ impl EncounterState {
         }
 
         let mut encounter = self.encounter.clone();
-        let mut path = self
-            .window
-            .app_handle()
-            .path_resolver()
-            .resource_dir()
-            .expect("could not get resource dir");
-        path.push(DATABASE_FILE_NAME);
         let prev_stagger = self.prev_stagger;
 
         let damage_log = self.damage_log.clone();
@@ -1925,7 +1233,6 @@ impl EncounterState {
         let party_info = self.party_info.clone();
         let raid_difficulty = self.raid_difficulty.clone();
         let region = self.region.clone();
-        let meter_version = self.window.app_handle().package_info().version.to_string();
 
         let ntp_fight_start = self.ntp_fight_start;
 
@@ -1944,8 +1251,8 @@ impl EncounterState {
         );
 
         encounter.current_boss_name = update_current_boss_name(&encounter.current_boss_name);
+        let version = version.to_string();
 
-        let window = self.window.clone();
         task::spawn(async move {
             let player_infos = if !raid_difficulty.is_empty()
                 && !encounter.current_boss_name.is_empty()
@@ -1961,14 +1268,14 @@ impl EncounterState {
                     .collect::<Vec<_>>();
 
                 stats_api
-                    .get_character_info(&encounter.current_boss_name, players, region.clone())
+                    .get_character_info(&version, &encounter.current_boss_name, players, region.clone())
                     .await
             } else {
                 None
             };
 
-            let mut conn = Connection::open(path).expect("failed to open database");
-            let tx = conn.transaction().expect("failed to create transaction");
+            let mut connection = connection_factory.get_connection().unwrap();
+            let tx = connection.transaction().expect("failed to create transaction");
 
             let encounter_id = insert_data(
                 &tx,
@@ -1985,7 +1292,7 @@ impl EncounterState {
                 raid_difficulty,
                 region,
                 player_infos,
-                meter_version,
+                &version,
                 ntp_fight_start,
                 rdps_valid,
                 manual,
@@ -1996,8 +1303,8 @@ impl EncounterState {
             info!("saved to db");
 
             if raid_clear {
-                window
-                    .emit("clear-encounter", encounter_id)
+                event_emitter
+                    .emit(ClearEncounter { encounter_id })
                     .expect("failed to emit clear-encounter");
             }
         });
