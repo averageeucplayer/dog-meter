@@ -50,16 +50,16 @@ pub struct EncounterEntity {
 
 impl EncounterEntity {
     pub fn is_player_with_stats(&self) -> bool {
-        self.entity_type == EntityType::PLAYER && self.damage_stats.damage_dealt > 0
+        self.entity_type == EntityType::Player && self.damage_stats.damage_dealt > 0
     }
 
     pub fn is_combat_participant(&self) -> bool {
         let is_valid_type = matches!(
             self.entity_type,
-            EntityType::PLAYER | EntityType::ESTHER | EntityType::BOSS
+            EntityType::Player | EntityType::Esther | EntityType::Boss
         );
 
-        let is_player_with_valid_class = self.entity_type == EntityType::PLAYER && self.class_id > 0;
+        let is_player_with_valid_class = self.entity_type == EntityType::Player && self.class_id > 0;
 
         (is_player_with_valid_class || is_valid_type) && self.damage_stats.damage_dealt > 0
     }

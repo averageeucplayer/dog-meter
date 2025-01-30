@@ -1,4 +1,5 @@
 pub mod encounter_state;
+pub mod parser_options;
 mod entity_tracker;
 mod id_tracker;
 mod party_tracker;
@@ -8,6 +9,8 @@ mod stats_api;
 mod status_tracker;
 mod utils;
 mod packet_handler;
+
+pub use parser_options::ParserOptions;
 
 use crate::abstractions::{ConnectionFactory, EventEmitter};
 use crate::flags::Flags;
@@ -25,14 +28,9 @@ use log::{info, warn};
 use packet_handler::handle_packet;
 use utils::*;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-pub struct ParserOptions {
-
-}
 
 pub fn start<C: ConnectionFactory, T: PacketSniffer, E: EventEmitter>(
     options: ParserOptions,
@@ -116,15 +114,14 @@ pub fn start<C: ConnectionFactory, T: PacketSniffer, E: EventEmitter>(
             state.encounter.boss_only_damage = false;
         }
 
-        let mut status_tracker: std::cell::RefMut<'_, StatusTracker> = status_tracker.borrow_mut();
-
         handle_packet(
+            &options,
             op_code,
             data,
             &mut state,
             party_tracker.clone(),
             &mut entity_tracker,
-            &mut status_tracker,
+            status_tracker.clone(),
             id_tracker.clone(),
             &mut party_cache,
             &mut party_map_cache,

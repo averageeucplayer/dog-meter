@@ -28,8 +28,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug)]
 pub struct DamageData {
-    pub skill_id: u32,
-    pub skill_effect_id: u32,
+    pub skill_id: Option<u32>,
+    pub skill_effect_id: Option<u32>,
     pub damage: i64,
     pub modifier: i32,
     pub target_current_hp: i64,
@@ -82,11 +82,13 @@ pub struct IdentityGeneric {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct Npc {
-    pub id: i32,
+    pub id: u32,
     pub name: Option<String>,
     pub grade: String,
     #[serde(rename = "type")]
     pub npc_type: String,
+    #[serde(rename = "hpBars")]
+    pub hp_bars: u16,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

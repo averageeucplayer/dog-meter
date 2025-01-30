@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
-#[repr(i32)]
+#[repr(u8)]
 pub enum HitOption {
     None = 0,
     BackAttack = 1,
@@ -13,7 +13,7 @@ pub enum HitOption {
 
 impl HitOption {
     pub fn from(value: i32) -> Self {
-        // unsafe { std::mem::transmute(value) }
+        // TODO: unsafe { std::mem::transmute(value) }
 
         match value {
             0 => HitOption::None,
@@ -26,7 +26,7 @@ impl HitOption {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[allow(non_camel_case_types)]
 #[repr(u32)]
 pub enum HitFlag {
@@ -49,7 +49,7 @@ pub enum HitFlag {
 
 impl HitFlag {
     pub fn from(value: i32) -> Self {
-        // unsafe { std::mem::transmute(value) }
+        // TODO: unsafe { std::mem::transmute(value) }
             
         match value {
             0 => HitFlag::Normal,

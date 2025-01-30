@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::any::type_name;
 
 use super::encounter_state::EncounterState;
 use super::entity_tracker::EntityTracker;
@@ -345,112 +346,115 @@ pub fn get_status_effect_buff_type_flags(buff: &SkillBuffData) -> u32 {
 }
 
 pub fn get_skill_name_and_icon(
-    skill_id: &u32,
-    skill_effect_id: &u32,
-    skill_name: String,
+    skill_id: Option<u32>,
+    skill_effect_id: Option<u32>,
     skill_tracker: &SkillTracker,
     entity_id: u64,
 ) -> (String, String, Option<Vec<u32>>) {
-    if (*skill_id == 0) && (*skill_effect_id == 0) {
-        ("Bleed".to_string(), "buff_168.png".to_string(), None)
-    } else if (*skill_effect_id != 0) && (*skill_effect_id == *skill_id) {
-        return if let Some(effect) = SKILL_EFFECT_DATA.get(skill_effect_id) {
-            if let Some(item_name) = effect.item_name.as_ref() {
-                return (
-                    item_name.clone(),
-                    effect.icon.as_ref().cloned().unwrap_or_default(),
-                    None,
-                );
-            }
-            if let Some(source_skill) = effect.source_skills.as_ref() {
-                if let Some(skill) = SKILL_DATA.get(source_skill.iter().min().unwrap_or(&0)) {
+    let skill_name = format!("{}", skill_id.unwrap_or_default());
+
+    match (skill_id, skill_effect_id) {
+        (None, None) => ("Bleed".to_string(), "buff_168.png".to_string(), None),
+        (None, Some(skill_effect_id)) => {
+            let skill_effect_data = SKILL_EFFECT_DATA.get(&skill_effect_id);
+
+            if let Some(effect) = skill_effect_data {
+                if let Some(item_name) = effect.item_name.as_ref() {
+                    return (
+                        item_name.clone(),
+                        effect.icon.as_ref().cloned().unwrap_or_default(),
+                        None,
+                    );
+                }
+
+                if let Some(source_skill) = effect.source_skills.as_ref() {
+                    let min_skill_id = source_skill.iter().min().unwrap_or(&0);
+                    let min_skill = SKILL_DATA.get(min_skill_id);
+
+                    if let Some(skill) = min_skill {
+                        return (
+                            skill.name.clone().unwrap_or_default(),
+                            skill.icon.clone().unwrap_or_default(),
+                            None,
+                        );
+                    }
+
+                    return (effect.comment.clone(), "".to_string(), None)
+                }
+                
+                let custom_skill_id = &(skill_effect_id / 10);
+                if let Some(skill) = SKILL_DATA.get(custom_skill_id) {
                     return (
                         skill.name.clone().unwrap_or_default(),
                         skill.icon.clone().unwrap_or_default(),
                         None,
                     );
                 }
-            } else if let Some(skill) = SKILL_DATA.get(&(skill_effect_id / 10)) {
-                return (
-                    skill.name.clone().unwrap_or_default(),
-                    skill.icon.clone().unwrap_or_default(),
-                    None,
-                );
+
+                return (effect.comment.clone(), "".to_string(), None)
             }
-            (effect.comment.clone(), "".to_string(), None)
-        } else {
+
             (skill_name, "".to_string(), None)
-        };
-    } else {
-        return if let Some(skill) = SKILL_DATA.get(skill_id) {
-            if let Some(summon_source_skill) = skill.summon_source_skills.as_ref() {
-                for source in summon_source_skill {
-                    if skill_tracker
-                        .skill_timestamp
-                        .get(&(entity_id, *source))
-                        .is_some()
-                    {
-                        if let Some(skill) = SKILL_DATA.get(source) {
-                            return (
-                                skill.name.clone().unwrap_or_default() + " (Summon)",
-                                skill.icon.clone().unwrap_or_default(),
-                                Some(summon_source_skill.clone()),
-                            );
+        },
+        (Some(skill_id), _) => {
+            if let Some(skill) = SKILL_DATA.get(&skill_id) {
+                if let Some(summon_source_skill) = skill.summon_source_skills.as_ref() {
+                    for source in summon_source_skill {
+                        if skill_tracker
+                            .skill_timestamp
+                            .get(&(entity_id, *source))
+                            .is_some()
+                        {
+                            if let Some(skill) = SKILL_DATA.get(source) {
+                                return (
+                                    skill.name.clone().unwrap_or_default() + " (Summon)",
+                                    skill.icon.clone().unwrap_or_default(),
+                                    Some(summon_source_skill.clone()),
+                                );
+                            }
                         }
                     }
-                }
-                if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0)) {
-                    (
-                        skill.name.clone().unwrap_or_default() + " (Summon)",
-                        skill.icon.clone().unwrap_or_default(),
-                        Some(summon_source_skill.clone()),
-                    )
+                    if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0)) {
+                        return (
+                            skill.name.clone().unwrap_or_default() + " (Summon)",
+                            skill.icon.clone().unwrap_or_default(),
+                            Some(summon_source_skill.clone()),
+                        )
+                    } else {
+                        return (skill_name, "".to_string(), None)
+                    }
+                } else if let Some(source_skill) = skill.source_skills.as_ref() {
+                    if let Some(skill) = SKILL_DATA.get(source_skill.iter().min().unwrap_or(&0)) {
+                        return (
+                            skill.name.clone().unwrap_or_default(),
+                            skill.icon.clone().unwrap_or_default(),
+                            None,
+                        )
+                    } else {
+                        return (skill_name, "".to_string(), None)
+                    }
                 } else {
-                    (skill_name, "".to_string(), None)
-                }
-            } else if let Some(source_skill) = skill.source_skills.as_ref() {
-                if let Some(skill) = SKILL_DATA.get(source_skill.iter().min().unwrap_or(&0)) {
-                    (
+                    return (
                         skill.name.clone().unwrap_or_default(),
                         skill.icon.clone().unwrap_or_default(),
                         None,
                     )
-                } else {
-                    (skill_name, "".to_string(), None)
                 }
-            } else {
-                (
+            }
+            
+            let custom_skill_id = &(skill_id - (skill_id % 10));
+            if let Some(skill) = SKILL_DATA.get(custom_skill_id) {
+                return (
                     skill.name.clone().unwrap_or_default(),
                     skill.icon.clone().unwrap_or_default(),
                     None,
                 )
             }
-        } else if let Some(skill) = SKILL_DATA.get(&(skill_id - (skill_id % 10))) {
-            (
-                skill.name.clone().unwrap_or_default(),
-                skill.icon.clone().unwrap_or_default(),
-                None,
-            )
-        } else {
+
             (skill_name, "".to_string(), None)
-        };
+        },
     }
-}
 
-pub fn get_skill_name(skill_id: &u32) -> String {
-    SKILL_DATA
-        .get(skill_id)
-        .map_or(skill_id.to_string(), |skill| {
-            if skill.name.is_none() {
-                skill_id.to_string()
-            } else {
-                skill.name.clone().unwrap_or_default()
-            }
-        })
-}
-
-pub fn get_skill(skill_id: &u32) -> Option<SkillData> {
-    SKILL_DATA.get(skill_id).cloned()
 }
 
 pub fn get_class_from_id(class_id: &u32) -> String {
@@ -990,13 +994,13 @@ pub fn insert_data(
     let fight_end = encounter.last_combat_packet;
 
     for (_key, entity) in encounter.entities.iter_mut().filter(|(_, e)| {
-        ((e.entity_type == EntityType::PLAYER && e.class_id != 0 && e.max_hp > 0)
+        ((e.entity_type == EntityType::Player && e.class_id != 0 && e.max_hp > 0)
             || e.name == encounter.local_player
-            || e.entity_type == EntityType::ESTHER
-            || (e.entity_type == EntityType::BOSS && e.max_hp > 0))
+            || e.entity_type == EntityType::Esther
+            || (e.entity_type == EntityType::Boss && e.max_hp > 0))
             && e.damage_stats.damage_dealt > 0
     }) {
-        if entity.entity_type == EntityType::PLAYER {
+        if entity.entity_type == EntityType::Player {
             let intervals = generate_intervals(fight_start, fight_end);
             if let Some(damage_log) = damage_log.get(&entity.name) {
                 if !intervals.is_empty() {
@@ -1281,7 +1285,7 @@ pub fn insert_data(
         .entities
         .values()
         .filter(|e| {
-            ((e.entity_type == EntityType::PLAYER && e.class_id != 0 && e.max_hp > 0)
+            ((e.entity_type == EntityType::Player && e.class_id != 0 && e.max_hp > 0)
                 || e.name == encounter.local_player)
                 && e.damage_stats.damage_dealt > 0
         })
@@ -1333,18 +1337,9 @@ pub fn insert_data(
     last_insert_id
 }
 
-pub fn map_status_effect(se: &StatusEffectDetails, custom_id_map: &mut HashMap<u32, u32>) -> u32 {
-    if se.custom_id > 0 {
-        custom_id_map.insert(se.custom_id, se.status_effect_id);
-        se.custom_id
-    } else {
-        se.status_effect_id
-    }
-}
-
 pub fn is_valid_player(player: &EncounterEntity) -> bool {
     player.gear_score >= 0.0
-        && player.entity_type == EntityType::PLAYER
+        && player.entity_type == EntityType::Player
         && player.character_id != 0
         && player.class_id != 0
         && player.name != "You"
@@ -1670,7 +1665,7 @@ fn get_spec_from_ark_passive(node: &ArkPassiveNode) -> String {
 }
 
 pub fn write_local_players(local_info: &LocalInfo, path: &str) -> anyhow::Result<()> {
-    let local_players_file = serde_json::to_string(local_info)?;
+    let local_players_file = serde_json::to_string_pretty(local_info)?;
     std::fs::write(path, local_players_file)?;
     Ok(())
 }
@@ -1696,13 +1691,6 @@ where
             warn!("Error parsing {}: {}", pkt_name, e);
             None
         }
-    }
-}
-
-pub fn debug_print(args: std::fmt::Arguments<'_>) {
-    #[cfg(debug_assertions)]
-    {
-        info!("{}", args);
     }
 }
 
@@ -1748,7 +1736,13 @@ pub fn on_shield_change(
         status_effect.target_id
     };
     let target = entity_tracker.get_source_entity(target_id);
-    state.on_boss_shield(&target, status_effect.value);
+    
+    if target.entity_type == EntityType::Boss
+        && target.name == state.encounter.current_boss_name
+    {
+        state.on_boss_shield(&target.name, status_effect.value);
+    }
+
     state.on_shield_used(&source, &target, status_effect.status_effect_id, change);
 }
 
@@ -1788,6 +1782,7 @@ pub fn send_to_ui<E: EventEmitter>(
             .expect("failed to emit encounter-update");
 
         if !is_damage_valid {
+            info!("invalid damage?");
             event_emitter
                 .emit(InvalidDamage { })
                 .expect("failed to emit invalid-damage");

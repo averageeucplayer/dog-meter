@@ -428,7 +428,7 @@ pub fn load_encounter(window: tauri::Window, id: String) -> Encounter {
                 damage_stats,
                 skill_stats,
                 entity_type: EntityType::from_str(entity_type.as_str())
-                    .unwrap_or(EntityType::UNKNOWN),
+                    .unwrap_or(EntityType::Unknown),
                 npc_id: row.get(12)?,
                 character_id: row.get(13).unwrap_or_default(),
                 engraving_data: engravings,

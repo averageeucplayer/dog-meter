@@ -68,7 +68,7 @@ impl EntityTracker {
             .get(&self.local_entity_id)
             .cloned()
             .unwrap_or_else(|| Entity {
-                entity_type: EntityType::PLAYER,
+                entity_type: EntityType::Player,
                 name: "You".to_string(),
                 class_id: 0,
                 gear_level: 0.0,
@@ -99,7 +99,8 @@ impl EntityTracker {
     pub fn init_pc(&mut self, pkt: PKTInitPC) -> Entity {
         let player = Entity {
             id: pkt.player_id,
-            entity_type: EntityType::PLAYER,
+            is_local: true,
+            entity_type: EntityType::Player,
             name: pkt.name,
             class_id: pkt.class_id as u32,
             gear_level: truncate_gear_level(pkt.gear_level),
@@ -132,10 +133,10 @@ impl EntityTracker {
         player
     }
 
-    pub fn new_pc(&mut self, pkt: PKTNewPC) -> Entity {
+    pub fn new_pc(&mut self, pkt: PKTNewPC, max_hp: i64) -> Entity {
         let mut entity = Entity {
             id: pkt.pc_struct.player_id,
-            entity_type: EntityType::PLAYER,
+            entity_type: EntityType::Player,
             name: pkt.pc_struct.name.clone(),
             class_id: pkt.pc_struct.class_id as u32,
             gear_level: truncate_gear_level(pkt.pc_struct.max_item_level), // todo?
@@ -146,6 +147,7 @@ impl EntityTracker {
                 .iter()
                 .map(|sp| (sp.stat_type, sp.value))
                 .collect(),
+            max_hp,
             ..Default::default()
         };
 
@@ -184,8 +186,8 @@ impl EntityTracker {
         entity
     }
 
-    pub fn new_npc(&mut self, pkt: PKTNewNpc, max_hp: i64) -> Entity {
-        let (entity_type, name, grade) = get_npc_entity_type_name_grade(&pkt.npc_struct, max_hp);
+    pub fn new_npc(&mut self, pkt: PKTNewNpc, max_hp: i64, min_boss_hp: i64) -> Entity {
+        let (entity_type, name, grade) = get_npc_entity_type_name_grade(&pkt.npc_struct, max_hp, min_boss_hp);
         let npc = Entity {
             id: pkt.npc_struct.object_id,
             entity_type,
@@ -194,13 +196,14 @@ impl EntityTracker {
             npc_id: pkt.npc_struct.type_id,
             level: pkt.npc_struct.level,
             balance_level: pkt.npc_struct.balance_level.unwrap_or(pkt.npc_struct.level),
-            push_immune: entity_type == EntityType::BOSS,
+            push_immune: entity_type == EntityType::Boss,
             stats: pkt
                 .npc_struct
                 .stat_pairs
                 .iter()
                 .map(|sp| (sp.stat_type, sp.value))
                 .collect(),
+            max_hp,
             ..Default::default()
         };
         self.entities.insert(npc.id, npc.clone());
@@ -209,10 +212,10 @@ impl EntityTracker {
         npc
     }
 
-    pub fn new_npc_summon(&mut self, pkt: PKTNewNpcSummon, max_hp: i64) -> Entity {
-        let (entity_type, name, grade) = get_npc_entity_type_name_grade(&pkt.npc_struct, max_hp);
-        let entity_type = if entity_type == EntityType::NPC {
-            EntityType::SUMMON
+    pub fn new_npc_summon(&mut self, pkt: PKTNewNpcSummon, max_hp: i64, min_boss_hp: i64) -> Entity {
+        let (entity_type, name, grade) = get_npc_entity_type_name_grade(&pkt.npc_struct, max_hp, min_boss_hp);
+        let entity_type = if entity_type == EntityType::Npc {
+            EntityType::Summon
         } else {
             entity_type
         };
@@ -225,13 +228,14 @@ impl EntityTracker {
             owner_id: pkt.owner_id,
             level: pkt.npc_struct.level,
             balance_level: pkt.npc_struct.balance_level.unwrap_or(pkt.npc_struct.level),
-            push_immune: entity_type == EntityType::BOSS,
+            push_immune: entity_type == EntityType::Boss,
             stats: pkt
                 .npc_struct
                 .stat_pairs
                 .iter()
                 .map(|sp| (sp.stat_type, sp.value))
                 .collect(),
+            max_hp,
             ..Default::default()
         };
         self.entities.insert(npc.id, npc.clone());
@@ -284,7 +288,7 @@ impl EntityTracker {
     pub fn new_projectile(&mut self, pkt: &PKTNewProjectile) {
         let projectile = Entity {
             id: pkt.projectile_info.projectile_id,
-            entity_type: EntityType::PROJECTILE,
+            entity_type: EntityType::Projectile,
             name: format!("{:x}", pkt.projectile_info.projectile_id),
             owner_id: pkt.projectile_info.owner_id,
             skill_id: pkt.projectile_info.skill_id,
@@ -297,7 +301,7 @@ impl EntityTracker {
     pub fn new_trap(&mut self, pkt: &PKTNewTrap) {
         let trap: Entity = Entity {
             id: pkt.trap_struct.object_id,
-            entity_type: EntityType::PROJECTILE,
+            entity_type: EntityType::Projectile,
             name: format!("{:x}", pkt.trap_struct.object_id),
             owner_id: pkt.trap_struct.owner_id,
             skill_id: pkt.trap_struct.skill_id,
@@ -352,7 +356,7 @@ impl EntityTracker {
                         "unknown local player, inferring from cache: {}",
                         member.name
                     );
-                    local_player.entity_type = EntityType::PLAYER;
+                    local_player.entity_type = EntityType::Player;
                     local_player.class_id = member.class_id as u32;
                     local_player.gear_level = truncate_gear_level(member.gear_level);
                     local_player.name.clone_from(&member.name);
@@ -370,7 +374,7 @@ impl EntityTracker {
 
             if let Some(entity_id) = entity_id {
                 if let Some(entity) = self.entities.get_mut(&entity_id) {
-                    if entity.entity_type == EntityType::PLAYER && entity.name == member.name {
+                    if entity.entity_type == EntityType::Player && entity.name == member.name {
                         entity.gear_level = truncate_gear_level(member.gear_level);
                         entity.class_id = member.class_id as u32;
                     }
@@ -397,7 +401,7 @@ impl EntityTracker {
 
     pub fn get_source_entity(&mut self, id: u64) -> Entity {
         let id = if let Some(entity) = self.entities.get(&id) {
-            if entity.entity_type == EntityType::PROJECTILE || entity.entity_type == EntityType::SUMMON {
+            if entity.entity_type == EntityType::Projectile || entity.entity_type == EntityType::Summon {
                 entity.owner_id
             } else {
                 id
@@ -411,7 +415,7 @@ impl EntityTracker {
         } else {
             let entity = Entity {
                 id,
-                entity_type: EntityType::UNKNOWN,
+                entity_type: EntityType::Unknown,
                 name: format!("{:x}", id),
                 ..Default::default()
             };
@@ -422,28 +426,28 @@ impl EntityTracker {
 
     pub fn id_is_player(&mut self, id: u64) -> bool {
         if let Some(entity) = self.entities.get(&id) {
-            entity.entity_type == EntityType::PLAYER
+            entity.entity_type == EntityType::Player
         } else {
             false
         }
     }
 
     pub fn guess_is_player(&mut self, entity: &mut Entity, skill_id: u32) {
-        if (entity.entity_type != EntityType::UNKNOWN && entity.entity_type != EntityType::PLAYER)
-            || (entity.entity_type == EntityType::PLAYER && entity.class_id != 0)
+        if (entity.entity_type != EntityType::Unknown && entity.entity_type != EntityType::Player)
+            || (entity.entity_type == EntityType::Player && entity.class_id != 0)
         {
             return;
         }
 
         let class_id = get_skill_class_id(&skill_id);
         if class_id != 0 {
-            if entity.entity_type == EntityType::PLAYER {
+            if entity.entity_type == EntityType::Player {
                 if entity.class_id == class_id {
                     return;
                 }
                 entity.class_id = class_id;
             } else {
-                entity.entity_type = EntityType::PLAYER;
+                entity.entity_type = EntityType::Player;
                 entity.class_id = class_id;
             }
         }
@@ -490,7 +494,7 @@ impl EntityTracker {
 
         let entity = Entity {
             id,
-            entity_type: EntityType::UNKNOWN,
+            entity_type: EntityType::Unknown,
             name: format!("{:x}", id),
             ..Default::default()
         };
@@ -508,7 +512,7 @@ impl EntityTracker {
             None => return,
         };
 
-        if entity.entity_type != EntityType::PLAYER {
+        if entity.entity_type != EntityType::Player {
             return;
         }
 
@@ -519,59 +523,6 @@ impl EntityTracker {
         entity.item_set = Some(player_item_set);
     }
 
-    //     pub fn get_local_player_set_options(&mut self, equip_list: Vec<ItemData>) {
-    //         let entity = match self.entities.get_mut(&self.local_entity_id) {
-    //             Some(entity) => entity,
-    //             None => return,
-    //         };
-
-    //         if entity.entity_type != PLAYER {
-    //             return;
-    //         }
-
-    //         let mut player_set: HashMap<String, HashMap<u8, u8>> = HashMap::new();
-    //         let mut player_equip_list: Vec<PlayerItemData> = Vec::new();
-    //         for item in equip_list {
-    //             // 1 -> weapon
-    //             // 6 -> pauldron
-    //             if item.slot >= 1 && item.slot <= 6 {
-    //                 if let Some(item_set) = ITEM_SET_INFO.item_ids.get(&item.id) {
-    //                     let set_entry = player_set
-    //                         .entry(item_set.set_name.clone())
-    //                         .or_insert(HashMap::new());
-    //                     let level = set_entry.get(&item_set.level).cloned().unwrap_or_default();
-    //                     set_entry.insert(item_set.level, level + 1);
-    //                 }
-    //             }
-    //             player_equip_list.push(PlayerItemData {
-    //                 id: item.id,
-    //                 slot: item.slot,
-    //             });
-    //         }
-    //         entity.items.equip_list = Some(player_equip_list);
-    //         let mut effective_options: Vec<PassiveOption> = Vec::new();
-    //         for (set_name, set_entry) in player_set {
-    //             if let Some(effect) = ITEM_SET_INFO.set_names.get(&set_name) {
-    //                 let mut max_count_applied: u8 = 0;
-    //                 let mut higher_level_count = 0;
-    //                 for (level, count) in set_entry {
-    //                     if let Some(effect_level) = effect.get(&level) {
-    //                         for (required_level, options) in effect_level {
-    //                             if *required_level > max_count_applied
-    //                                 && count + higher_level_count >= *required_level
-    //                             {
-    //                                 effective_options.extend(options.options.iter().cloned());
-    //                                 max_count_applied = max_count_applied.max(*required_level);
-    //                             }
-    //                         }
-    //                         higher_level_count = count;
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         entity.item_set = Some(effective_options);
-    //     }
 }
 
 pub fn get_player_equipment(
@@ -580,49 +531,12 @@ pub fn get_player_equipment(
     let mut player_set: HashMap<String, HashMap<u8, u8>> = HashMap::new();
     let mut player_equip_list: Vec<PlayerItemData> = Vec::new();
 
-    // for item in equip_list {
-    //     // 1 -> weapon
-    //     // 6 -> pauldron
-    //     if item.slot >= 1 && item.slot <= 6 {
-    //         if let Some(item_set) = ITEM_SET_INFO.item_ids.get(&item.item_id) {
-    //             let set_entry = player_set
-    //                 .entry(item_set.set_name.clone())
-    //                 .or_insert(HashMap::new());
-    //             let level = set_entry.get(&item_set.level).cloned().unwrap_or_default();
-    //             set_entry.insert(item_set.level, level + 1);
-    //         }
-    //     }
-    //     player_equip_list.push(PlayerItemData {
-    //         id: item.item_id,
-    //         slot: item.slot,
-    //     });
-    // }
-
     (player_set, player_equip_list)
 }
 
 pub fn get_player_item_set(player_set: HashMap<String, HashMap<u8, u8>>) -> Vec<PassiveOption> {
     let mut effective_options: Vec<PassiveOption> = Vec::new();
-    // for (set_name, set_entry) in player_set {
-    //     if let Some(effect) = ITEM_SET_INFO.set_names.get(&set_name) {
-    //         let mut max_count_applied: u8 = 0;
-    //         let mut higher_level_count = 0;
-    //         for (level, count) in set_entry {
-    //             if let Some(effect_level) = effect.get(&level) {
-    //                 for (required_level, options) in effect_level {
-    //                     if *required_level > max_count_applied
-    //                         && count + higher_level_count >= *required_level
-    //                     {
-    //                         effective_options.extend(options.options.iter().cloned());
-    //                         max_count_applied = max_count_applied.max(*required_level);
-    //                     }
-    //                 }
-    //                 higher_level_count = count;
-    //             }
-    //         }
-    //     }
-    // }
-
+   
     effective_options
 }
 
@@ -644,9 +558,9 @@ pub fn get_current_and_max_hp(stat_pair: &Vec<StatPair>) -> (i64, i64) {
     (hp.unwrap_or_default(), max_hp.unwrap_or_default())
 }
 
-fn get_npc_entity_type_name_grade(npc: &NpcStruct, max_hp: i64) -> (EntityType, String, String) {
+fn get_npc_entity_type_name_grade(npc: &NpcStruct, max_hp: i64, min_boss_hp: i64) -> (EntityType, String, String) {
     if let Some(esther) = get_esther_from_npc_id(npc.type_id) {
-        return (EntityType::ESTHER, esther.name, "none".to_string());
+        return (EntityType::Esther, esther.name, "none".to_string());
     }
 
     if let Some((_, npc_info)) = NPC_DATA.get_key_value(&npc.type_id) {
@@ -655,16 +569,16 @@ fn get_npc_entity_type_name_grade(npc: &NpcStruct, max_hp: i64) -> (EntityType, 
             || npc_info.grade == "raid"
             || npc_info.grade == "epic_raid"
             || npc_info.grade == "commander")
-            && max_hp > 10_000
+            && max_hp > min_boss_hp
             && !npc_name.contains('_')
             && npc_name.chars().all(|c| c.is_ascii())
         {
-            (EntityType::BOSS, npc_name.clone(), npc_info.grade.clone())
+            (EntityType::Boss, npc_name.clone(), npc_info.grade.clone())
         } else {
-            (EntityType::NPC, npc_name.clone(), npc_info.grade.clone())
+            (EntityType::Npc, npc_name.clone(), npc_info.grade.clone())
         }
     } else {
-        (EntityType::NPC, format!("{:x}", npc.object_id), "none".to_string())
+        (EntityType::Npc, format!("{:x}", npc.object_id), "none".to_string())
     }
 }
 

@@ -311,13 +311,13 @@ export interface StaggerEvent {
 }
 
 export enum EntityType {
-    UNKNOWN = "UNKNOWN",
-    MONSTER = "MONSTER",
-    BOSS = "BOSS",
-    GUARDIAN = "GUARDIAN",
-    PLAYER = "PLAYER",
-    NPC = "NPC",
-    ESTHER = "ESTHER"
+    UNKNOWN = "Unknown",
+    MONSTER = "Monster",
+    BOSS = "Boss",
+    GUARDIAN = "Guardian",
+    PLAYER = "Player",
+    NPC = "Npc",
+    ESTHER = "Esther"
 }
 
 export interface ClassColors {

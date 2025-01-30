@@ -187,7 +187,7 @@ impl StatusTracker {
     ) -> (Vec<StatusEffectDetails>, Vec<StatusEffectDetails>) {
         let timestamp = Utc::now();
 
-        let use_party_for_source = if source_entity.entity_type == EntityType::PLAYER {
+        let use_party_for_source = if source_entity.entity_type == EntityType::Player {
             self.should_use_party_status_effect(source_entity.character_id, local_character_id)
         } else {
             false
@@ -203,7 +203,7 @@ impl StatusTracker {
         let status_effects_on_source =
             self.actually_get_status_effects(source_id, source_type, timestamp);
 
-        let use_party_for_target = if source_entity.entity_type == EntityType::PLAYER {
+        let use_party_for_target = if source_entity.entity_type == EntityType::Player {
             self.should_use_party_status_effect(target_entity.character_id, local_character_id)
         } else {
             false

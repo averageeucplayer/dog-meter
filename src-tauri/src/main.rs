@@ -3,7 +3,7 @@
     windows_subsystem = "windows"
 )]
 
-mod app;
+mod logger;
 mod parser;
 mod commands;
 mod constants;
@@ -18,6 +18,7 @@ mod packet_sniffer;
 mod fight_simulator;
 mod abstractions;
 mod models;
+mod updater;
 
 use anyhow::Result;
 use commands::generate_handlers;
@@ -29,7 +30,7 @@ use window_event::on_window_event;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    app::init();
+    logger::init();
 
     set_panic_hook();
 

@@ -1,11 +1,12 @@
-use std::{error::Error, sync::Arc};
+use std::{error::Error, sync::Arc, time::Duration};
 
 use log::{error, info, warn};
 use tauri::{App, AppHandle, Manager};
 use tauri_plugin_window_state::WindowExt;
 use tokio::task;
 
-use crate::{abstractions::{DefaultEventEmitter, EventEmitter, SqliteConnectionFactory}, constants::{DATABASE_FILE_NAME, LOCAL_PLAYERS_FILE_NAME, LOGS_WINDOW_LABEL, METER_WINDOW_LABEL, WINDOW_STATE_FLAGS}, database::setup_db, flags::Flags, packet_sniffer::{FakePacketSniffer, WindivertPacketSniffer}, parser::{self, ParserOptions}, settings::{create_default_settings, read_settings}, utils::{remove_driver, start_loa_process}};
+use crate::{abstractions::{DefaultEventEmitter,
+    SqliteConnectionFactory}, constants::*, database::setup_db, flags::Flags, packet_sniffer::{FakePacketSniffer, WindivertPacketSniffer}, parser::{self, ParserOptions}, settings::{create_default_settings, read_settings}, updater::launch_update, utils::{remove_driver, start_loa_process}};
 
 
 pub fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
@@ -90,7 +91,8 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
     task::spawn_blocking(move || {
         // let packet_sniffer = WindivertPacketSniffer::new();
         let options = ParserOptions {
-
+            capture_damage_packet_timeout: Duration::from_secs(0),
+            min_boss_hp: 10_000
         };
         let connection_factory = Arc::new(SqliteConnectionFactory::new(&database_path));
         let packet_sniffer = FakePacketSniffer::new();
@@ -120,38 +122,3 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn launch_update(handle: AppHandle) {
-    
-    tauri::async_runtime::spawn(async move {
-        match tauri::updater::builder(handle).check().await {
-            Ok(update) => {
-                if update.is_update_available() {
-                    #[cfg(not(debug_assertions))]
-                    {
-                        info!(
-                            "update available, downloading update: v{}",
-                            update.latest_version()
-                        );
-
-                        unload_driver();
-                        remove_driver();
-
-                        update
-                            .download_and_install()
-                            .await
-                            .map_err(|e| {
-                                error!("failed to download update: {}", e);
-                            })
-                            .ok();
-                    }
-                } else {
-                    info!("no update available");
-                }
-            }
-            Err(e) => {
-                warn!("failed to get update: {}", e);
-            }
-        }
-    });
-
-}

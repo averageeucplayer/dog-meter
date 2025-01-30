@@ -87,13 +87,13 @@ pub struct EncounterUpdate {
     pub encounter: Encounter
 }
 
-impl AppEvent<String> for EncounterUpdate {
+impl AppEvent<Encounter> for EncounterUpdate {
     fn name(&self) -> &'static str {
         "encounter-update"
     }
     
-    fn payload(&self) -> String {
-        "".to_string()
+    fn payload(&self) -> Encounter {
+        self.encounter.clone()
     }
 }
 
@@ -115,12 +115,12 @@ pub struct PartyUpdate {
     pub party_info: HashMap<i32, Vec<String>>
 }
 
-impl AppEvent<String> for PartyUpdate {
+impl AppEvent<HashMap<i32, Vec<String>>> for PartyUpdate {
     fn name(&self) -> &'static str {
         "party-update"
     }
     
-    fn payload(&self) -> String {
-        "".to_string()
+    fn payload(&self) -> HashMap<i32, Vec<String>> {
+        self.party_info.clone()
     }
 }

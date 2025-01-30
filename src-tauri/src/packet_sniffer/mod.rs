@@ -1,5 +1,6 @@
 mod fake;
 mod windivert;
+mod utils;
 
 pub use fake::FakePacketSniffer;
 pub use windivert::WindivertPacketSniffer;

@@ -50,7 +50,7 @@ pub struct PKTInitPC {
     pub player_id: EntityId,
     pub name: String,
     pub character_id: CharacterId,
-    pub class_id: CharacterId,
+    pub class_id: ClassId,
     pub gear_level: GearLevel,
     pub stat_pairs: Vec<StatPair>,
     pub status_effect_datas: Vec<StatusEffectData>,

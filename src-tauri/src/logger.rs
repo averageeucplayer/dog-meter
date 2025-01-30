@@ -15,6 +15,13 @@ struct AppState {
     pub logger_handle: Option<LoggerHandle>,
 }
 
+pub fn debug_print(args: std::fmt::Arguments<'_>) {
+    #[cfg(debug_assertions)]
+    {
+        info!("{}", args);
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self {
@@ -23,7 +30,7 @@ impl AppState {
     }
 
     pub fn init_logger(&mut self) {
-        if self.logger_handle.clone().is_some() {
+        if self.logger_handle.is_some() {
             error!("AppState logger already inited");
             return;
         }
@@ -32,8 +39,13 @@ impl AppState {
             std::env::current_exe().expect("Can't find path to executable");
         resource_directory.pop();
 
-        let mut logger = Logger::try_with_str("info, tao=off")
-            .unwrap()
+        let mut logger = if cfg!(debug_assertions) {
+            Logger::try_with_str("info, tao=off").unwrap()
+        } else {
+            Logger::try_with_str("warn, tao=off").unwrap()
+        };
+
+        logger = logger
             .log_to_file(
                 FileSpec::default()
                     .suppress_timestamp()
@@ -55,7 +67,7 @@ impl AppState {
             logger = logger.duplicate_to_stdout(Duplicate::All);
         }
 
-        self.logger_handle = Some(logger.start().unwrap());
+        self.logger_handle = logger.start().ok();
     }
 
     pub fn get_logger(&self) -> Option<LoggerHandle> {

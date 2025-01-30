@@ -11,8 +11,6 @@ use serde_json::json;
 use std::fmt;
 use std::time::Duration;
 
-use super::utils::debug_print;
-
 pub const API_URL: &str = "https://inspect.fau.dev";
 pub const INSPECT_API_URL: &str = "https://api.snow.xyz";
 
@@ -116,7 +114,7 @@ impl StatsApi {
                 || state.raid_difficulty == "Trial"
                 || state.raid_difficulty == "The First"))
         {
-            debug_print(format_args!("not valid for raid info"));
+            info!("not valid for raid info");
             return;
         }
 
@@ -125,7 +123,7 @@ impl StatsApi {
             .entities
             .iter()
             .filter_map(|(_, e)| {
-                if e.entity_type == EntityType::PLAYER {
+                if e.entity_type == EntityType::Player {
                     Some((e.name.clone(), e.character_id))
                 } else {
                     None
@@ -164,7 +162,7 @@ impl StatsApi {
                 .await
             {
                 Ok(_) => {
-                    debug_print(format_args!("sent raid info"));
+                    info!("sent raid info");
                 }
                 Err(e) => {
                     warn!("failed to send raid info: {:?}", e);
@@ -200,7 +198,7 @@ impl StatsApi {
             Ok(res) => {
                 match res.json::<HashMap<String, PlayerStats>>().await {
                     Ok(data) => {
-                        debug_print(format_args!("received player stats"));
+                        info!("received player stats");
                         Some(data)
                     }
                     Err(e) => {

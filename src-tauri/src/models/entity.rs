@@ -7,29 +7,29 @@ use serde::{Deserialize, Serialize};
 #[allow(non_camel_case_types)]
 pub enum EntityType {
     #[default]
-    UNKNOWN,
-    MONSTER,
-    BOSS,
-    GUARDIAN,
-    PLAYER,
-    NPC,
-    ESTHER,
-    PROJECTILE,
-    SUMMON,
+    Unknown,
+    Monster,
+    Boss,
+    Guardian,
+    Player,
+    Npc,
+    Esther,
+    Projectile,
+    Summon,
 }
 
 impl Display for EntityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
-            EntityType::UNKNOWN => "UNKNOWN".to_string(),
-            EntityType::MONSTER => "MONSTER".to_string(),
-            EntityType::BOSS => "BOSS".to_string(),
-            EntityType::GUARDIAN => "GUARDIAN".to_string(),
-            EntityType::PLAYER => "PLAYER".to_string(),
-            EntityType::NPC => "NPC".to_string(),
-            EntityType::ESTHER => "ESTHER".to_string(),
-            EntityType::PROJECTILE => "PROJECTILE".to_string(),
-            EntityType::SUMMON => "SUMMON".to_string(),
+            EntityType::Unknown => "UNKNOWN".to_string(),
+            EntityType::Monster => "MONSTER".to_string(),
+            EntityType::Boss => "BOSS".to_string(),
+            EntityType::Guardian => "GUARDIAN".to_string(),
+            EntityType::Player => "PLAYER".to_string(),
+            EntityType::Npc => "NPC".to_string(),
+            EntityType::Esther => "ESTHER".to_string(),
+            EntityType::Projectile => "PROJECTILE".to_string(),
+            EntityType::Summon => "SUMMON".to_string(),
         };
         write!(f, "{}", str)
     }
@@ -40,14 +40,14 @@ impl FromStr for EntityType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "UNKNOWN" => Ok(EntityType::UNKNOWN),
-            "MONSTER" => Ok(EntityType::MONSTER),
-            "BOSS" => Ok(EntityType::BOSS),
-            "GUARDIAN" => Ok(EntityType::GUARDIAN),
-            "PLAYER" => Ok(EntityType::PLAYER),
-            "NPC" => Ok(EntityType::NPC),
-            "ESTHER" => Ok(EntityType::ESTHER),
-            _ => Ok(EntityType::UNKNOWN),
+            "UNKNOWN" => Ok(EntityType::Unknown),
+            "MONSTER" => Ok(EntityType::Monster),
+            "BOSS" => Ok(EntityType::Boss),
+            "GUARDIAN" => Ok(EntityType::Guardian),
+            "PLAYER" => Ok(EntityType::Player),
+            "NPC" => Ok(EntityType::Npc),
+            "ESTHER" => Ok(EntityType::Esther),
+            _ => Ok(EntityType::Unknown),
         }
     }
 }
@@ -57,6 +57,7 @@ pub struct Entity {
     pub id: u64,
     pub entity_type: EntityType,
     pub name: String,
+    pub is_local: bool,
     pub npc_id: u32,
     pub class_id: u32,
     pub gear_level: f32,
@@ -70,8 +71,26 @@ pub struct Entity {
     pub push_immune: bool,
     pub level: u16,
     pub balance_level: u16,
+    pub max_hp: i64,
     pub item_set: Option<Vec<PassiveOption>>,
     pub items: Items,
+}
+
+impl Display for Entity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self.entity_type {
+            EntityType::Unknown => format!("Unknown: id {}", self.id),
+            EntityType::Monster => format!("Monster: id {} name {} npc_id {}", self.id, self.name, self.npc_id),
+            EntityType::Boss => format!("Boss: id {} name {} npc_id {}", self.id, self.name, self.npc_id),
+            EntityType::Guardian => format!("Guardian: id {} name {}", self.id, self.name),
+            EntityType::Player => format!("{}Player: id {} name {} {} {} {}", if self.is_local { "Local " } else { "" }, self.id, self.name, self.class_id, self.character_id, self.gear_level),
+            EntityType::Npc => format!("Npc: id {} name {} npc_id {}", self.id, self.name, self.npc_id),
+            EntityType::Esther => format!("Esther: id {} name {}", self.id, self.name),
+            EntityType::Projectile => format!("Projecile: id {} skill_id {} owner_id {}", self.id, self.skill_id, self.owner_id),
+            EntityType::Summon => format!("Summon: id {} name {} npc_id {}", self.id, self.name, self.npc_id),
+        };
+        write!(f, "{}", str)
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

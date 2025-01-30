@@ -185,15 +185,15 @@ pub fn is_combat_effect_condition_valid(
             }
             "pc" => {
                 if actor == "self" {
-                    if self_entity.entity_type != EntityType::PLAYER {
+                    if self_entity.entity_type != EntityType::Player {
                         is_valid = false;
                     }
                 } else if actor == "target" {
-                    if target_entity.entity_type != EntityType::PLAYER {
+                    if target_entity.entity_type != EntityType::Player {
                         is_valid = false;
                     }
                 } else if actor == "caster" {
-                    if caster_entity.entity_type != EntityType::PLAYER {
+                    if caster_entity.entity_type != EntityType::Player {
                         is_valid = false;
                     }
                 } else {
@@ -216,7 +216,7 @@ pub fn is_combat_effect_condition_valid(
                 }
             }
             "abnormal_move_immune" => {
-                if target_entity.entity_type != EntityType::BOSS || !target_entity.push_immune {
+                if target_entity.entity_type != EntityType::Boss || !target_entity.push_immune {
                     is_valid = false;
                 }
             }
@@ -259,7 +259,7 @@ pub fn is_combat_effect_condition_valid(
             }
             "npc_scaled_level_less" => {
                 if actor == "target" {
-                    if target_entity.entity_type == EntityType::BOSS
+                    if target_entity.entity_type == EntityType::Boss
                         && target_entity.balance_level > condition.arg as u16
                     {
                         is_valid = false;
@@ -271,7 +271,7 @@ pub fn is_combat_effect_condition_valid(
             "npc_grade_less" => {
                 if actor == "target" {
                     if let Some(grade) = NPC_GRADE.get(target_entity.grade.as_str()).cloned() {
-                        if target_entity.entity_type == EntityType::BOSS && grade > condition.arg {
+                        if target_entity.entity_type == EntityType::Boss && grade > condition.arg {
                             is_valid = false;
                         }
                     } else {
@@ -284,7 +284,7 @@ pub fn is_combat_effect_condition_valid(
             "npc_grade_greater" => {
                 if actor == "target" {
                     if let Some(grade) = NPC_GRADE.get(target_entity.grade.as_str()).cloned() {
-                        if target_entity.entity_type == EntityType::BOSS && grade < condition.arg {
+                        if target_entity.entity_type == EntityType::Boss && grade < condition.arg {
                             is_valid = false;
                         }
                     } else {
@@ -296,7 +296,7 @@ pub fn is_combat_effect_condition_valid(
             }
             "identity_stance" => {
                 if actor == "self" {
-                    if self_entity.entity_type != EntityType::PLAYER
+                    if self_entity.entity_type != EntityType::Player
                         || self_entity.stance as i32 != condition.arg
                     {
                         is_valid = false;
