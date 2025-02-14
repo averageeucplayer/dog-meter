@@ -15,6 +15,7 @@ use uuid::Uuid;
 use std::cell::RefCell;
 use std::cmp::{max, Ordering, Reverse};
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1681,14 +1682,15 @@ pub fn get_and_set_region(path: &str, state: &mut EncounterState) {
     }
 }
 
-pub fn parse_pkt<T, F>(data: &[u8], new_fn: F, pkt_name: &str) -> Option<T>
+pub fn parse_pkt<T, F>(data: &[u8], new_fn: F) -> Option<T>
 where
+    T: Sized,
     F: FnOnce(&[u8]) -> Result<T, anyhow::Error>,
 {
     match new_fn(data) {
         Ok(packet) => Some(packet),
         Err(e) => {
-            warn!("Error parsing {}: {}", pkt_name, e);
+            warn!("Error parsing {}: {}", type_name::<T>(), e);
             None
         }
     }

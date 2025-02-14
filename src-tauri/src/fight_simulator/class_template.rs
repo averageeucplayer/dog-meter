@@ -213,15 +213,6 @@ pub static DPS_CLASS_TEMPLATES: Lazy<Vec<ClassTemplate>> = Lazy::new(|| {
             skill_ids: vec![1, 2, 3, 4, 5, 6, 7, 8]
         },
         ClassTemplate {
-            id: 601,
-            name: "Specialist",
-            awakening_skill_id: 0,
-            hyper_awakening_skill_id: 0,
-            hyper_awakening_technique_skill_id: 0,
-            identity_skill_ids: vec![0],
-            skill_ids: vec![1, 2, 3, 4, 5, 6, 7, 8]
-        },
-        ClassTemplate {
             id: 603,
             name: "Aeromancer",
             awakening_skill_id: 0,

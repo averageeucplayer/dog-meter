@@ -16,8 +16,6 @@ use super::{encounter_state::EncounterState, entity_tracker::{get_current_and_ma
 //     fn handle_packet(&self, state: &mut State, entity_tracker: &mut EntityTracker, event_emitter: &mut EventEmitter);
 // }
 
-
-
 pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
     options: &ParserOptions,
     op_code: Pkt,
@@ -44,8 +42,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
 
     match op_code {
         Pkt::CounterAttackNotify => {
-            if let Some(pkt) =
-                parse_pkt(&data, PKTCounterAttackNotify::new, "PKTCounterAttackNotify")
+            if let Some(pkt) = parse_pkt(&data, PKTCounterAttackNotify::new)
             {
                 if let Some(entity) = entity_tracker.entities.get(&pkt.source_id) {
                     state.on_counterattack(entity);
@@ -53,7 +50,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::DeathNotify => {
-            if let Some(pkt) = parse_pkt(&data, PKTDeathNotify::new, "PKTDeathNotify") {
+            if let Some(pkt) = parse_pkt(&data, PKTDeathNotify::new) {
                 if let Some(entity) = entity_tracker.entities.get(&pkt.target_id) {
                     info!(
                         "death: {}, {}, {}",
@@ -65,10 +62,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
         }
         Pkt::IdentityGaugeChangeNotify => {
             if let Some(pkt) = parse_pkt(
-                &data,
-                PKTIdentityGaugeChangeNotify::new,
-                "PKTIdentityGaugeChangeNotify",
-            ) {
+                &data, PKTIdentityGaugeChangeNotify::new) {
                 state.on_identity_gain(&pkt);
                 if flags.can_emit_details() {
                     event_emitter.emit(
@@ -88,7 +82,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             //    > character_id        > entity_id    > player_info
             // 3. InitPC
 
-            if let Some(pkt) = parse_pkt(&data, PKTInitEnv::new, "PKTInitEnv") {
+            if let Some(pkt) = parse_pkt(&data, PKTInitEnv::new) {
                 party_tracker.borrow_mut().reset_party_mappings();
                 state.raid_difficulty = "".to_string();
                 state.raid_difficulty_id = 0;
@@ -103,7 +97,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::InitPC => {
-            if let Some(pkt) = parse_pkt(&data, PKTInitPC::new, "PKTInitPC") {
+            if let Some(pkt) = parse_pkt(&data, PKTInitPC::new) {
                 let (hp, max_hp) = get_current_and_max_hp(&pkt.stat_pairs);
                 let entity = entity_tracker.init_pc(pkt);
                 info!("{}", entity);
@@ -126,7 +120,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewPC => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewPC::new, "PKTNewPC") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewPC::new) {
                 let (hp, max_hp) = get_current_and_max_hp(&pkt.pc_struct.stat_pairs);
                 let entity = entity_tracker.new_pc(pkt, max_hp);
                 info!("{}", entity);
@@ -134,7 +128,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewNpc => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewNpc::new, "PKTNewNpc") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewNpc::new) {
                 let (hp, max_hp) = get_current_and_max_hp(&pkt.npc_struct.stat_pairs);
                 let entity = entity_tracker.new_npc(pkt, max_hp, options.min_boss_hp);
                 info!("{}", entity);
@@ -142,7 +136,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewNpcSummon => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewNpcSummon::new, "PKTNewNpcSummon") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewNpcSummon::new) {
                 let (hp, max_hp) = get_current_and_max_hp(&pkt.npc_struct.stat_pairs);
                 let entity = entity_tracker.new_npc_summon(pkt, max_hp, options.min_boss_hp);
                 info!("{}", entity);
@@ -150,7 +144,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewProjectile => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewProjectile::new, "PKTNewProjectile") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewProjectile::new) {
                 entity_tracker.new_projectile(&pkt);
                 let skill_id = pkt.projectile_info.skill_id;
                 let is_player = entity_tracker.id_is_player(pkt.projectile_info.owner_id);
@@ -168,7 +162,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewTrap => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewTrap::new, "PKTNewTrap") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewTrap::new) {
                 entity_tracker.new_trap(&pkt);
                 if entity_tracker.id_is_player(pkt.trap_struct.owner_id)
                     && pkt.trap_struct.skill_id > 0
@@ -185,7 +179,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
         }
 
         Pkt::RaidBegin => {
-            if let Some(pkt) = parse_pkt(&data, PKTRaidBegin::new, "PKTRaidBegin") {
+            if let Some(pkt) = parse_pkt(&data, PKTRaidBegin::new) {
                 info!("raid begin: {}", pkt.raid_id);
                 match pkt.raid_id {
                     308226 | 308227 | 308239 | 308339 => {
@@ -224,7 +218,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             info!("phase: 0 - RaidResult");
         }
         Pkt::RemoveObject => {
-            if let Some(pkt) = parse_pkt(&data, PKTRemoveObject::new, "PKTRemoveObject") {
+            if let Some(pkt) = parse_pkt(&data, PKTRemoveObject::new) {
                 for upo in pkt.unpublished_objects {
                     entity_tracker.entities.remove(&upo.object_id);
                     status_tracker.borrow_mut().remove_local_object(upo.object_id);
@@ -232,7 +226,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::SkillCastNotify => {
-            if let Some(pkt) = parse_pkt(&data, PKTSkillCastNotify::new, "PKTSkillCastNotify") {
+            if let Some(pkt) = parse_pkt(&data, PKTSkillCastNotify::new) {
                 let mut entity = entity_tracker.get_source_entity(pkt.source_id);
                 entity_tracker.guess_is_player(&mut entity, pkt.skill_id);
                 if entity.class_id == 202 {
@@ -247,7 +241,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::SkillStartNotify => {
-            if let Some(pkt) = parse_pkt(&data, PKTSkillStartNotify::new, "PKTSkillStartNotify")
+            if let Some(pkt) = parse_pkt(&data, PKTSkillStartNotify::new)
             {
                 let skill_id = pkt.skill_id;
                 let mut entity = entity_tracker.get_source_entity(pkt.source_id);
@@ -289,11 +283,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
                 info!("ignoring damage - SkillDamageAbnormalMoveNotify");
                 return Ok(());
             }
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTSkillDamageAbnormalMoveNotify::new,
-                "PKTSkillDamageAbnormalMoveNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTSkillDamageAbnormalMoveNotify::new) {
                 let events: Vec<_> = pkt.skill_damage_abnormal_move_events
                     .iter()
                     .map(|pr| pr.skill_damage_event.clone())
@@ -319,8 +309,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
                 info!("ignoring damage - SkillDamageNotify");
                 return Ok(());
             }
-            if let Some(pkt) =
-                parse_pkt(&data, PKTSkillDamageNotify::new, "PktSkillDamageNotify")
+            if let Some(pkt) = parse_pkt(&data, PKTSkillDamageNotify::new)
             {
                 let skill_id = (pkt.skill_id != 0).then(|| pkt.skill_id);
 
@@ -338,7 +327,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::PartyInfo => {
-            if let Some(pkt) = parse_pkt(&data, PKTPartyInfo::new, "PKTPartyInfo") {
+            if let Some(pkt) = parse_pkt(&data, PKTPartyInfo::new) {
                 entity_tracker.party_info(pkt, &local_info);
                 let local_player_id = entity_tracker.local_entity_id;
                 if let Some(entity) = entity_tracker.entities.get(&local_player_id) {
@@ -349,7 +338,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::PartyLeaveResult => {
-            if let Some(pkt) = parse_pkt(&data, PKTPartyLeaveResult::new, "PKTPartyLeaveResult")
+            if let Some(pkt) = parse_pkt(&data, PKTPartyLeaveResult::new)
             {
                 party_tracker
                     .borrow_mut()
@@ -359,11 +348,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::PartyStatusEffectAddNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTPartyStatusEffectAddNotify::new,
-                "PKTPartyStatusEffectAddNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTPartyStatusEffectAddNotify::new) {
                 // info!("{:?}", pkt);
                 let shields =
                     entity_tracker.party_status_effect_add(pkt, &state.encounter.entities);
@@ -397,11 +382,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::PartyStatusEffectRemoveNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTPartyStatusEffectRemoveNotify::new,
-                "PKTPartyStatusEffectRemoveNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTPartyStatusEffectRemoveNotify::new) {
                 let character_id = pkt.character_id;
                 let (is_shield, shields_broken, _left_workshop) =
                     entity_tracker.party_status_effect_remove(pkt);
@@ -420,11 +401,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::PartyStatusEffectResultNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTPartyStatusEffectResultNotify::new,
-                "PKTPartyStatusEffectResultNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTPartyStatusEffectResultNotify::new) {
                 // info!("{:?}", pkt);
                 party_tracker.borrow_mut().add(
                     pkt.raid_instance_id,
@@ -436,11 +413,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::StatusEffectAddNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTStatusEffectAddNotify::new,
-                "PKTStatusEffectAddNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTStatusEffectAddNotify::new) {
                 let status_effect = entity_tracker.build_and_register_status_effect(
                     &pkt.status_effect_data,
                     pkt.object_id,
@@ -476,11 +449,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::StatusEffectRemoveNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTStatusEffectRemoveNotify::new,
-                "PKTStatusEffectRemoveNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTStatusEffectRemoveNotify::new) {
                 let object_id = pkt.object_id;
                 let (is_shield, shields_broken, _left_workshop) =
                     status_tracker.borrow_mut().remove_status_effects(
@@ -526,7 +495,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
         }
         Pkt::TriggerStartNotify => {
             if let Some(pkt) =
-                parse_pkt(&data, PKTTriggerStartNotify::new, "PKTTriggerStartNotify")
+                parse_pkt(&data, PKTTriggerStartNotify::new)
             {
                 match pkt.signal {
                     57 | 59 | 61 | 63 | 74 | 76 => {
@@ -561,11 +530,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::ZoneMemberLoadStatusNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTZoneMemberLoadStatusNotify::new,
-                "PKTZoneMemberLoadStatusNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTZoneMemberLoadStatusNotify::new) {
                 stats_api.valid_zone = VALID_ZONES.contains(&pkt.zone_id);
 
                 if state.raid_difficulty_id >= pkt.zone_id && !state.raid_difficulty.is_empty()
@@ -582,18 +547,12 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
         Pkt::ZoneObjectUnpublishNotify => {
             if let Some(pkt) = parse_pkt(
                 &data,
-                PKTZoneObjectUnpublishNotify::new,
-                "PKTZoneObjectUnpublishNotify",
-            ) {
+                PKTZoneObjectUnpublishNotify::new) {
                 status_tracker.borrow_mut().remove_local_object(pkt.object_id);
             }
         }
         Pkt::StatusEffectSyncDataNotify => {
-            if let Some(pkt) = parse_pkt(
-                &data,
-                PKTStatusEffectSyncDataNotify::new,
-                "PKTStatusEffectSyncDataNotify",
-            ) {
+            if let Some(pkt) = parse_pkt(&data, PKTStatusEffectSyncDataNotify::new) {
                 let (status_effect, old_value) =
                     status_tracker.borrow_mut().sync_status_effect(
                         pkt.status_effect_instance_id,
@@ -620,10 +579,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
         }
         Pkt::TroopMemberUpdateMinNotify => {
             if let Some(pkt) = parse_pkt(
-                &data,
-                PKTTroopMemberUpdateMinNotify::new,
-                "PKTTroopMemberUpdateMinNotify",
-            ) {
+                &data,PKTTroopMemberUpdateMinNotify::new) {
                 // info!("{:?}", pkt);
                 if let Some(object_id) = id_tracker.borrow().get_entity_id(pkt.character_id) {
                     if let Some(entity) = entity_tracker.get_entity_ref(object_id) {
@@ -665,7 +621,7 @@ pub fn handle_packet<E: EventEmitter, C: ConnectionFactory>(
             }
         }
         Pkt::NewTransit => {
-            if let Some(pkt) = parse_pkt(&data, PKTNewTransit::new, "PKTNewZoneKey") {
+            if let Some(pkt) = parse_pkt(&data, PKTNewTransit::new) {
                 damage_handler.update_zone_instance_id(pkt.channel_id);
             }
         }

@@ -48,6 +48,7 @@ pub struct FightSimulatorOptions<'a> {
     pub zone_id: u32,
     pub zone_level: ZoneLevel,
     pub trigger_signal_on_end: u32,
+    pub buff_party_every: Duration,
     pub use_hyper_awakening_after: Duration,
     pub perform_counter_every: Option<Duration>,
     pub players_dead_after: Vec<(&'a str, Duration)>
@@ -63,6 +64,7 @@ pub struct Boss {
     pub status_effect_datas: Vec<StatusEffectData>
 }
 
+#[derive(Debug, Clone)]
 pub struct Party<'a> {
     pub id: u32,
     pub members: Vec<Player<'a>>
@@ -72,6 +74,7 @@ pub struct Party<'a> {
 pub struct Player<'a> {
     pub id: u64,
     pub is_dead: bool,
+    pub is_support: bool,
     pub name: String,
     pub character_id: u64,
     pub class_id: u32,
@@ -85,6 +88,7 @@ pub struct Player<'a> {
 }
 
 pub struct FightSimulator<'a> {
+    last_buff_on: Option<Instant>,
     last_counter_on: Option<Instant>,
     fight_started_on: Option<Instant>,
     current_time: Instant,
@@ -146,6 +150,7 @@ impl<'a> FightSimulator<'a> {
 
         Self {
             current_time: Instant::now(),
+            last_buff_on: None,
             last_counter_on: None,
             fight_started_on: None,
             options,
@@ -280,6 +285,36 @@ impl<'a> FightSimulator<'a> {
 
         let mut packets = vec![];
 
+        let can_apply_buff = match self.last_buff_on {
+            Some(on) => self.current_time - on > self.options.buff_party_every,
+            None => true
+        };
+
+        if can_apply_buff {
+            let party = random_item(&self.parties);
+            let support = party.members.iter().find(|pr| pr.is_support).unwrap();
+            let dps = party.members.iter().find(|pr| !pr.is_support).unwrap();
+            let status_effect_id = 362006;
+
+            let packet = PKTPartyStatusEffectAddNotify {
+                character_id: dps.character_id,
+                status_effect_datas: vec![StatusEffectData {
+                    source_id: support.id,
+                    status_effect_id,
+                    status_effect_instance_id: get_random_u32(self.options.min_id as u32, self.options.max_id as u32),
+                    total_time: 8.0,
+                    value: Some(vec![]),
+                    end_tick: 0,
+                    stack_count: 0
+                }]
+            };
+
+            let data = serde_json::to_vec(&packet).unwrap();
+
+            let tuple = (Pkt::PartyStatusEffectAddNotify, data);
+            packets.push(tuple);
+        }
+
         for (name, duration) in &self.options.players_dead_after {
 
             if self.dead_player_names.contains(*name) {
@@ -304,9 +339,9 @@ impl<'a> FightSimulator<'a> {
             }
         }
 
-        if let (Some(fight_started_on), Some(perform_counter_every)) = (self.fight_started_on, self.options.perform_counter_every) {
+        if let Some(perform_counter_every) = self.options.perform_counter_every {
             let should_perform_counter = match self.last_counter_on {
-                Some(last_counter_on) => fight_started_on - last_counter_on > perform_counter_every,
+                Some(last_counter_on) => self.current_time - last_counter_on > perform_counter_every,
                 None => true,
             };
     
@@ -328,6 +363,7 @@ impl<'a> FightSimulator<'a> {
     }
 
     pub fn random_player_damage_packet(&mut self) -> (Pkt, Vec<u8>) {
+        self.fight_started_on.get_or_insert(Instant::now());
 
         let mut player = random_item_mut(&mut self.players);
 
@@ -469,6 +505,7 @@ impl<'a> FightSimulator<'a> {
 
         let player = Player {
             id,
+            is_support: true,
             is_dead: false,
             name: name.to_string(),
             class_id: class_template.id,
@@ -536,6 +573,7 @@ impl<'a> FightSimulator<'a> {
 
         let player = Player {
             id,
+            is_support: false,
             is_dead: false,
             name: name.to_string(),
             class_id: class_template.id,

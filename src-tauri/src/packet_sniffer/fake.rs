@@ -16,7 +16,8 @@ impl PacketSniffer for FakePacketSniffer {
 
         tokio::spawn(async move {
 
-            let mut player_names = vec!["Molenzwiebel", "Snow", "Baker", "Mathi", "Inngrimsch", "Poont", "Legalia", "Melatonin"];
+            // let mut player_names = vec!["Molenzwiebel", "Snow", "Baker", "Mathi", "Inngrimsch", "Poont", "Legalia", "Melatonin"];
+            let mut player_names = vec!["Derpy", "Text", "Baker", "Mathi", "TheLostOnes", "VanStorm", "Legalia", "Melatonin"];
             let local_player_name = random_item(&player_names);
             shuffle_array(&mut player_names);
 
@@ -41,15 +42,19 @@ impl PacketSniffer for FakePacketSniffer {
                 player_names,
                 party_count: 2,
                 local_player_name,
-                boss_name: "Phantom Manifester Brelshaza",
-                boss_max_hp: 720284908120,
+                // boss_name: "Phantom Manifester Brelshaza",
+                // boss_max_hp: 720284908120,
+                boss_name: "Narok the Butcher",
+                boss_max_hp: 576327077687,
                 zone_id: 37522,
                 zone_level: ZoneLevel::Hard,
                 trigger_signal_on_end: 57,
+                buff_party_every: Duration::from_secs(10),
                 use_hyper_awakening_after: Duration::from_secs(300),
                 perform_counter_every: Some(Duration::from_secs(30)),
                 players_dead_after: vec![
-                    ("Baker", Duration::from_secs(30))
+                    ("Baker", Duration::from_secs(30)),
+                    ("Derpy", Duration::from_secs(30))
                 ],
             };
 
@@ -83,6 +88,7 @@ impl PacketSniffer for FakePacketSniffer {
                     
                     let packet = fight_simulator.get_trigger_start_packet();
                     tx.send(packet).unwrap();
+                    break;
                 }
                 else {
                     let packets = fight_simulator.perform_special_actions();
