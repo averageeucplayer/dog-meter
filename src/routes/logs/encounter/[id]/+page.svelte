@@ -1,6 +1,6 @@
 <script lang="ts">
     import LogDamageMeter from "$lib/components/logs/LogDamageMeter.svelte";
-    import { formatTimestamp } from "$lib/utils/numbers";
+    import { formatTimestamp, getBossHpBars } from "$lib/utils/numbers";
     import {
         backNavStore,
         ifaceChangedStore,
@@ -18,10 +18,17 @@
     import BossOnlyDamage from "$lib/components/shared/BossOnlyDamage.svelte";
     import type { PageData } from "./$types";
 
-    export let data: PageData;
-    $: encounter = data.encounter;
-    $: fav = encounter.favorite;
-    $: raidGate = $raidGates.get(encounter.currentBossName);
+    interface Props {
+        data: PageData;
+    }
+
+    let { data }: Props = $props();
+    let encounter = $derived(data.encounter);
+    let fav = $state(false);
+    $effect(() => {
+        fav = encounter.favorite;
+    });
+    let raidGate = $derived($raidGates.get(encounter.currentBossName));
 
     onMount(() => {
         if ($searchStore.length > 0) {
@@ -33,6 +40,18 @@
         await invoke("toggle_encounter_favorite", { id: Number(data.id) });
         fav = !fav;
     }
+
+    let bossHpBars: number | undefined = $state();
+
+    $effect(() => {
+        if (encounter) {
+            let boss = encounter.entities[encounter.currentBossName];
+            if (boss) {
+                let bossMaxHpBars = getBossHpBars(boss.name, boss.maxHp);
+                bossHpBars = Math.ceil((boss.currentHp / boss.maxHp) * bossMaxHpBars);
+            }
+        }
+    });
 </script>
 
 <div class="h-screen bg-zinc-800 pb-20">
@@ -49,7 +68,7 @@
             <div class="flex items-center truncate pl-1 text-xl tracking-tighter">
                 <button
                     use:tooltip={{ content: `${fav ? "Remove from" : "Add to"} Favorites` }}
-                    on:click={toggle_favorite}>
+                    onclick={toggle_favorite}>
                     {#if fav}
                         <svg class="size-7 fill-yellow-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"
                             ><path
@@ -72,6 +91,9 @@
                         {#if $settings.general.showGate && raidGate}
                             <span class="text-sky-200">[{raidGate}]</span>
                         {/if}
+                        {#if !encounter.cleared && bossHpBars}
+                            <span class="text-gray-400">[Wipe - {bossHpBars}x]</span>
+                        {/if}
                         <div class="truncate" use:tooltip={{ content: encounter.currentBossName }}>
                             {encounter.currentBossName}
                         </div>
@@ -82,6 +104,9 @@
                         {/if}
                         {#if $settings.general.showGate && raidGate}
                             <span class="text-sky-200">[{raidGate}]</span>
+                        {/if}
+                        {#if !encounter.cleared && bossHpBars}
+                            <span class="text-gray-400">[Wipe - {bossHpBars}x]</span>
                         {/if}
                         <div class="truncate" use:tooltip={{ content: encounter.currentBossName }}>
                             {encounter.currentBossName}

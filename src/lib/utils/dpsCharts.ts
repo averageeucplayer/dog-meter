@@ -16,6 +16,7 @@ import {
     abbreviateNumber,
     formatDurationFromMs,
     formatDurationFromS,
+    getBossHpBars,
     resampleData,
     round,
     round2,

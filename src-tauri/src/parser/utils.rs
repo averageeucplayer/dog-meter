@@ -415,25 +415,14 @@ pub fn get_skill_name_and_icon(
                             }
                         }
                     }
-                    if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0)) {
-                        return (
-                            skill.name.clone().unwrap_or_default() + " (Summon)",
-                            skill.icon.clone().unwrap_or_default(),
-                            Some(summon_source_skill.clone()),
-                        )
-                    } else {
-                        return (skill_name, "".to_string(), None)
-                    }
-                } else if let Some(source_skill) = skill.source_skills.as_ref() {
-                    if let Some(skill) = SKILL_DATA.get(source_skill.iter().min().unwrap_or(&0)) {
-                        return (
-                            skill.name.clone().unwrap_or_default(),
-                            skill.icon.clone().unwrap_or_default(),
-                            None,
-                        )
-                    } else {
-                        return (skill_name, "".to_string(), None)
-                    }
+                }
+                if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0))
+                {
+                    (
+                        skill.name.clone().unwrap_or_default() + " (Summon)",
+                        skill.icon.clone().unwrap_or_default(),
+                        Some(summon_source_skill.clone()),
+                    )
                 } else {
                     return (
                         skill.name.clone().unwrap_or_default(),
@@ -681,56 +670,32 @@ fn is_class_engraving(class_id: u32, engraving_id: u32) -> bool {
 pub fn is_hyper_awakening_skill(skill_id: u32) -> bool {
     matches!(
         skill_id,
-        16720
-            | 16730
-            | 18240
-            | 18250
-            | 17250
-            | 17260
-            | 36230
-            | 36240
-            | 45820
-            | 45830
-            | 19360
-            | 19370
-            | 20370
-            | 20350
-            | 21320
-            | 21330
-            | 37380
-            | 37390
-            | 22360
-            | 22370
-            | 23400
-            | 23410
-            | 24300
-            | 24310
-            | 34620
-            | 34630
-            | 39340
-            | 39350
-            | 47300
-            | 47310
-            | 25410
-            | 25420
-            | 27910
-            | 27920
-            | 26940
-            | 26950
-            | 46620
-            | 46630
-            | 29360
-            | 29370
-            | 30320
-            | 30330
-            | 35810
-            | 35820
-            | 38320
-            | 38330
-            | 31920
-            | 31930
-            | 32290
-            | 32280
+        16720 | 16730 // berserker
+            | 18240 | 18250 // destroyer
+            | 17250 | 17260 // gunlancer
+            | 36230 | 36240 // paladin
+            | 45820 | 45830 // slayer
+            | 19360 | 19370 // arcanist
+            | 20370 | 20350 // summoner
+            | 21320 | 21330 // bard
+            | 37380 | 37390 // sorceress
+            | 22360 | 22370 // wardancer
+            | 23400 | 23410 // scrapper
+            | 24300 | 24310 // soulfist
+            | 34620 | 34630 // glaivier
+            | 39340 | 39350 // striker
+            | 47300 | 47310 // breaker
+            | 25410 | 25420 // deathblade
+            | 28260 | 28270 // sharpshooter
+            | 27910 | 27920 // shadowhunter
+            | 26940 | 26950 // reaper
+            | 46620 | 46630 // souleater
+            | 29360 | 29370 // deadeye
+            | 30320 | 30330 // artillerist
+            | 35810 | 35820 // machinist
+            | 38320 | 38330 // gunslinger
+            | 31920 | 31930 // artist
+            | 32290 | 32300 // aeromancer
     )
 }
 
@@ -1022,10 +987,12 @@ pub fn insert_data(
                     calculate_average_dps(damage_log, fight_start_sec, fight_end_sec);
             }
 
-            entity.spec = Some(get_player_spec(
+            let spec = get_player_spec(
                 entity,
                 &encounter.encounter_damage_stats.buffs,
-            ));
+            );
+            
+            entity.spec = Some(spec.clone());
 
             if let Some(info) = player_info
                 .as_ref()
@@ -1064,26 +1031,28 @@ pub fn insert_data(
                 let (class, other) = get_engravings(entity.class_id, &info.engravings);
                 entity.engraving_data = other;
                 if info.ark_passive_enabled {
-                    // not reliable enough
-                    // if let Some(tree) = info.ark_passive_data.as_ref() {
-                    //     if let Some(enlightenment) = tree.enlightenment.as_ref() {
-                    //         for node in enlightenment.iter() {
-                    //             let spec = get_spec_from_ark_passive(node);
-                    //             if spec != "Unknown" {
-                    //                 entity.spec = Some(spec);
-                    //                 break;
-                    //             }
-                    //         }
-                    //     }
-                    // }
+                    if spec == "Unknown" { 
+                        // not reliable enough to be used on its own
+                        if let Some(tree) = info.ark_passive_data.as_ref() {
+                            if let Some(enlightenment) = tree.enlightenment.as_ref() {
+                                for node in enlightenment.iter() {
+                                    let spec = get_spec_from_ark_passive(node);
+                                    if spec != "Unknown" {
+                                        entity.spec = Some(spec);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     entity.ark_passive_data = info.ark_passive_data.clone();
                 } else if class.len() == 1 {
                     entity.spec = Some(class[0].clone());
                 }
             }
-
-            entity.damage_stats.dps = entity.damage_stats.damage_dealt / duration_seconds;
         }
+
+        entity.damage_stats.dps = entity.damage_stats.damage_dealt / duration_seconds;
 
         for (_, skill) in entity.skills.iter_mut() {
             skill.dps = skill.total_damage / duration_seconds;
@@ -1114,11 +1083,11 @@ pub fn insert_data(
                             }
                         }
                     }
-                    
-                    if adj_hits > 0 { 
+
+                    if adj_hits > 0 {
                         e.adjusted_crit = Some(adj_crits as f64 / adj_hits as f64);
                     }
-                    
+
                     e.max_damage_cast = log
                         .values()
                         .map(|cast| cast.hits.iter().map(|hit| hit.damage).sum::<i64>())
@@ -1382,14 +1351,13 @@ pub fn update_current_boss_name(boss_name: &str) -> String {
 }
 
 fn get_player_spec(player: &EncounterEntity, buffs: &HashMap<u32, StatusEffect>) -> String {
-    if player.skills.len() < 8 { 
+    if player.skills.len() < 8 {
         return "Unknown".to_string();
     }
-    
+
     match player.class.as_str() {
         "Berserker" => {
-            if player.skills.contains_key(&16140)
-            {
+            if player.skills.contains_key(&16140) {
                 "Berserker Technique".to_string()
             } else {
                 "Mayhem".to_string()
@@ -1539,7 +1507,10 @@ fn get_player_spec(player: &EncounterEntity, buffs: &HashMap<u32, StatusEffect>)
         }
         "Sharpshooter" => {
             let buff_names = get_buff_names(player, buffs);
-            if buff_names.iter().any(|s| s.contains("Loyal Companion") || s.contains("Hawk Support")) {
+            if buff_names
+                .iter()
+                .any(|s| s.contains("Loyal Companion") || s.contains("Hawk Support"))
+            {
                 "Loyal Companion".to_string()
             } else {
                 "Death Strike".to_string()
@@ -1561,7 +1532,10 @@ fn get_player_spec(player: &EncounterEntity, buffs: &HashMap<u32, StatusEffect>)
         }
         "Machinist" => {
             let buff_names = get_buff_names(player, buffs);
-            if buff_names.iter().any(|s| s.contains("Combat Mode") || s.contains("Evolutionary Legacy")) {
+            if buff_names
+                .iter()
+                .any(|s| s.contains("Combat Mode") || s.contains("Evolutionary Legacy"))
+            {
                 "Evolutionary Legacy".to_string()
             } else {
                 "Arthetinean Skill".to_string()

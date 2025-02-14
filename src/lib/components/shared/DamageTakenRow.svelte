@@ -6,31 +6,34 @@
     import { formatPlayerName } from "$lib/utils/strings";
     import { generateClassTooltip, tooltip } from "$lib/utils/tooltip";
     import { cubicOut } from "svelte/easing";
-    import { tweened } from "svelte/motion";
     import { localPlayer } from "$lib/utils/stores";
+    import { Tween } from "svelte/motion";
 
-    export let player: Entity;
-    export let width: number;
-    export let alpha = 0.6;
-    export let shadow = false;
-    export let tween: boolean;
+    interface Props {
+        player: Entity;
+        width: number;
+        alpha?: number;
+        shadow?: boolean;
+        tween: boolean;
+    }
 
-    const tweenedValue = tweened(0, {
+    let { player, width, alpha = 0.6, shadow = false, tween }: Props = $props();
+
+    const tweenedValue = new Tween(0, {
         duration: 400,
         easing: cubicOut
     });
 
-    let color = "#ffffff";
-    let name: string;
+    $effect(() => {
+        tweenedValue.set(width  ?? 0);
+    });
 
-    let damageTaken: (string | number)[];
+    let color = $state("#ffffff");
+    let name: string = $state(formatPlayerName(player, $settings.general));
 
-    $: {
-        tweenedValue.set(width);
-        damageTaken = abbreviateNumberSplit(player.damageStats.damageTaken);
+    let damageTaken: (string | number)[] = $state(abbreviateNumberSplit(player.damageStats.damageTaken));
 
-        name = formatPlayerName(player, $settings.general);
-
+    $effect(() => {
         if (Object.hasOwn($colors, player.class)) {
             if ($settings.general.constantLocalPlayerColor && $localPlayer == player.name) {
                 color = $colors["Local"].color;
@@ -38,7 +41,7 @@
                 color = $colors[player.class].color;
             }
         }
-    }
+    });
 </script>
 
 <td class="pl-1">
@@ -60,7 +63,7 @@
         {damageTaken[0]}<span class="text-3xs text-gray-300">{damageTaken[1]}</span>
     </span>
 </td>
-<div
+<td
     class="absolute left-0 -z-10 h-7 px-2 py-1"
     class:shadow-md={shadow}
-    style="background-color: {HexToRgba(color, alpha)}; width: {tween ? $tweenedValue : width}%" />
+    style="background-color: {HexToRgba(color, alpha)}; width: {tween ? tweenedValue.current : width}%"></td>
