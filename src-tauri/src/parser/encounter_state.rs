@@ -1292,7 +1292,7 @@ impl EncounterState {
                 
                 if !players.is_empty() && players.len() <= 16 { 
                     stats_api
-                        .get_character_info(&encounter.current_boss_name, players, region.clone())
+                        .get_character_info(&version, &encounter.current_boss_name, players, region.clone())
                         .await
                 } else {
                     None

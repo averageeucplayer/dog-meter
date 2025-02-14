@@ -415,14 +415,25 @@ pub fn get_skill_name_and_icon(
                             }
                         }
                     }
-                }
-                if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0))
-                {
-                    (
-                        skill.name.clone().unwrap_or_default() + " (Summon)",
-                        skill.icon.clone().unwrap_or_default(),
-                        Some(summon_source_skill.clone()),
-                    )
+                    if let Some(skill) = SKILL_DATA.get(summon_source_skill.iter().min().unwrap_or(&0)) {
+                        return (
+                            skill.name.clone().unwrap_or_default() + " (Summon)",
+                            skill.icon.clone().unwrap_or_default(),
+                            Some(summon_source_skill.clone()),
+                        )
+                    } else {
+                        return (skill_name, "".to_string(), None)
+                    }
+                } else if let Some(source_skill) = skill.source_skills.as_ref() {
+                    if let Some(skill) = SKILL_DATA.get(source_skill.iter().min().unwrap_or(&0)) {
+                        return (
+                            skill.name.clone().unwrap_or_default(),
+                            skill.icon.clone().unwrap_or_default(),
+                            None,
+                        )
+                    } else {
+                        return (skill_name, "".to_string(), None)
+                    }
                 } else {
                     return (
                         skill.name.clone().unwrap_or_default(),
